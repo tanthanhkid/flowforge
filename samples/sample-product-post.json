@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "id": "sample-product-post",
+  "name": "🛍️ Post bán hàng sản phẩm (FB post)",
+  "nodes": [
+    {
+      "id": "product",
+      "type": "input.text",
+      "params": { "value": "Bình giữ nhiệt inox 500ml, giữ nóng 12 giờ, giữ lạnh 24 giờ, thiết kế nhỏ gọn nhiều màu sắc, giá 199.000đ" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "caption",
+      "type": "llm.generate",
+      "params": {
+        "model": "",
+        "system": "Bạn là copywriter Facebook chuyên nghiệp, chuyên viết caption bán hàng theo công thức AIDA (Attention - Interest - Desire - Action). Nhiệm vụ: từ mô tả sản phẩm, viết 1 caption Facebook bán hàng có hook mở đầu gây chú ý, nêu lợi ích, tạo mong muốn mua, kèm lời kêu gọi hành động (CTA) rõ ràng và 3-5 hashtag liên quan. Chỉ trả về kết quả, không giải thích thêm.",
+        "temperature": 0.85
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "img_prompt",
+      "type": "llm.transform",
+      "params": {
+        "instruction": "Từ mô tả sản phẩm này, viết 1 image prompt bằng tiếng Anh (tối đa 40 từ) tả một bức ảnh sản phẩm chụp studio chuyên nghiệp (product photography, studio lighting), nền sạch, ánh sáng đẹp, làm nổi bật sản phẩm. Chỉ trả về prompt, không giải thích.",
+        "model": "",
+        "temperature": 0.4
+      },
+      "position": { "x": 300, "y": 170 }
+    },
+    {
+      "id": "image",
+      "type": "fal.image",
+      "params": {
+        "modelId": "fal-ai/flux/dev",
+        "imageSize": "square_hd"
+      },
+      "position": { "x": 600, "y": 170 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 900, "y": 85 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "product", "port": "text" }, "to": { "node": "caption", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "product", "port": "text" }, "to": { "node": "img_prompt", "port": "text" } },
+    { "id": "e3", "from": { "node": "img_prompt", "port": "text" }, "to": { "node": "image", "port": "prompt" } },
+    { "id": "e4", "from": { "node": "caption", "port": "text" }, "to": { "node": "result", "port": "in1" } },
+    { "id": "e5", "from": { "node": "image", "port": "image" }, "to": { "node": "result", "port": "in2" } }
+  ]
+}

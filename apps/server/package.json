@@ -8,7 +8,8 @@
     "start": "tsx src/index.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke-step2.ts"
+    "smoke": "tsx scripts/smoke-step2.ts",
+    "seed": "tsx scripts/seed-samples.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

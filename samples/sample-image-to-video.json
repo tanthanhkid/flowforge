@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "id": "sample-image-to-video",
+  "name": "🎥 Ảnh sinh động thành video (FB post)",
+  "nodes": [
+    {
+      "id": "scene",
+      "type": "input.text",
+      "params": { "value": "cozy Vietnamese coffee shop at sunrise, steam rising from cup" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "image",
+      "type": "fal.image",
+      "params": {
+        "modelId": "fal-ai/flux/dev",
+        "imageSize": "landscape_16_9"
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "video",
+      "type": "fal.video",
+      "params": {
+        "modelId": "fal-ai/kling-video/v2/master/image-to-video",
+        "duration": 5,
+        "aspectRatio": "16:9"
+      },
+      "position": { "x": 600, "y": 0 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 900, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "scene", "port": "text" }, "to": { "node": "image", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "scene", "port": "text" }, "to": { "node": "video", "port": "prompt" } },
+    { "id": "e3", "from": { "node": "image", "port": "image" }, "to": { "node": "video", "port": "image" } },
+    { "id": "e4", "from": { "node": "image", "port": "image" }, "to": { "node": "result", "port": "in1" } },
+    { "id": "e5", "from": { "node": "video", "port": "video" }, "to": { "node": "result", "port": "in2" } }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "id": "sample-quote-card",
+  "name": "📸 Ảnh quote động lực (FB post)",
+  "nodes": [
+    {
+      "id": "topic",
+      "type": "input.text",
+      "params": { "value": "thành công và kỷ luật bản thân" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "quote",
+      "type": "llm.generate",
+      "params": {
+        "model": "",
+        "system": "Bạn là copywriter Facebook chuyên nghiệp, chuyên viết quote động lực ngắn gọn, sâu sắc. Nhiệm vụ: viết đúng 1 câu quote (không quá 20 từ) về chủ đề được cho, sau đó xuống dòng và viết 1 đoạn caption Facebook ngắn kèm 3-5 hashtag liên quan. Chỉ trả về kết quả, không giải thích thêm.",
+        "temperature": 0.85
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "img_prompt",
+      "type": "llm.transform",
+      "params": {
+        "instruction": "Từ câu quote này, viết 1 image prompt bằng tiếng Anh (tối đa 40 từ) tả một bức ảnh nền phong cách minimal, ánh sáng đẹp, tông màu hài hoà, phù hợp làm background cho quote động lực. KHÔNG được chứa bất kỳ chữ/văn bản nào trong ảnh. Chỉ trả về prompt, không giải thích.",
+        "model": "",
+        "temperature": 0.4
+      },
+      "position": { "x": 600, "y": 0 }
+    },
+    {
+      "id": "image",
+      "type": "fal.image",
+      "params": {
+        "modelId": "fal-ai/flux/dev",
+        "imageSize": "square_hd"
+      },
+      "position": { "x": 900, "y": 0 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 1200, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "topic", "port": "text" }, "to": { "node": "quote", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "quote", "port": "text" }, "to": { "node": "img_prompt", "port": "text" } },
+    { "id": "e3", "from": { "node": "img_prompt", "port": "text" }, "to": { "node": "image", "port": "prompt" } },
+    { "id": "e4", "from": { "node": "quote", "port": "text" }, "to": { "node": "result", "port": "in1" } },
+    { "id": "e5", "from": { "node": "image", "port": "image" }, "to": { "node": "result", "port": "in2" } }
+  ]
+}
