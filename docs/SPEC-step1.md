@@ -80,7 +80,7 @@ export type NodeState = 'pending' | 'running' | 'success' | 'error' | 'skipped';
 export type RunStatus = 'running' | 'success' | 'error';
 ```
 
-`poll` defaults: initialDelayMs 1000, factor 1.5, maxDelayMs 10_000, timeoutMs 300_000. Backoff: delay = min(initial * factor^n, max). Abort qua `signal` → reject `new Error('aborted')`. Timeout → reject error có chữ 'timeout'. Sleep phải cancel được bằng signal (không giữ process sống). Để test được với fake timers, dùng `setTimeout` thường (vitest fake timers điều khiển được).
+`poll` defaults: initialDelayMs 1000, factor 1.5, maxDelayMs 10_000, timeoutMs 300_000. Backoff: delay = min(initial * factor^n, max). Abort qua `signal` → reject `new Error('aborted')`. Timeout → reject error có chữ 'timeout'. Sleep phải cancel được bằng signal. **Timer delay của poll KHÔNG được `unref()`** — một run đang poll phải giữ process sống (standalone runner/script sẽ thoát sớm nếu unref; đã gặp bug thật ở smoke script). Để test được với fake timers, dùng `setTimeout` thường (vitest fake timers điều khiển được).
 
 ## 3. schema.ts — Workflow JSON (versioned)
 

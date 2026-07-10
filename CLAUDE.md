@@ -9,7 +9,7 @@
    - Agent tool: `model: "sonnet"`
    - Workflow `agent()`: `opts.model: 'sonnet'`
 3. Review agent chạy model mặc định (Fable) — đó là công việc orchestration/quality-control, không phải implementation.
-4. **Bước verify (adversarial verification của findings) dùng Opus** (`model: 'opus'`) — yêu cầu của user "cho chắc ăn".
+4. **Bước verify (adversarial verification của findings) dùng Sonnet** (`model: 'sonnet'`) — user đổi từ Opus sang Sonnet 2026-07-10 (Opus hay kẹt session limit). Tóm lại: mọi subagent delegate đều là Sonnet, trừ review panel chạy model mặc định (Fable).
 5. Spec, tài liệu thiết kế, CLAUDE.md, memory: Fable viết trực tiếp được (đây là artifact orchestration).
 
 ## Tech stack (bắt buộc)

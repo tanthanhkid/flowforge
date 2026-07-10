@@ -5,17 +5,19 @@
   "type": "module",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke-step2.ts"
   },
   "dependencies": {
-    "zod": "^4.4.3",
-    "better-sqlite3": "^12.11.1"
+    "better-sqlite3": "^12.11.1",
+    "dotenv": "^17.4.2",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "typescript": "^7.0.2",
-    "tsx": "^4.23.0",
-    "vitest": "^4.1.10",
+    "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.1",
-    "@types/better-sqlite3": "^7.6.13"
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
   }
 }

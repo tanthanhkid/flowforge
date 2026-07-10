@@ -17,7 +17,9 @@ const POLL_DEFAULTS: Required<PollOptions> = {
   timeoutMs: 300_000,
 };
 
-/** setTimeout wrapper that resolves early (rejecting) on abort, and never keeps the process alive. */
+/** setTimeout wrapper that resolves early (rejecting) on abort. Keeps the process alive
+ * (no unref) — a run that is actively polling must not let a standalone script/runner
+ * exit early just because the event loop looks empty otherwise. */
 function sleepCancelable(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise<void>((resolve, reject) => {
     if (signal.aborted) {
@@ -34,9 +36,6 @@ function sleepCancelable(ms: number, signal: AbortSignal): Promise<void> {
       signal.removeEventListener('abort', onAbort);
       resolve();
     }, ms);
-    // Plain Node timer objects support unref(); fake-timer implementations
-    // (vitest/@sinonjs) either provide a no-op or a real one — both are safe to call.
-    (timer as unknown as { unref?: () => void }).unref?.();
 
     signal.addEventListener('abort', onAbort, { once: true });
   });
