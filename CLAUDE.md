@@ -1,0 +1,87 @@
+# FlowForge — Node-based AI Media Workflow Builder (MVP)
+
+Ứng dụng web kiểu ComfyUI nhưng: toàn bộ model chạy qua cloud API (không chạy model local), có AI agent (OpenRouter) tự tạo/sửa workflow từ mô tả tiếng Việt/Anh, và người dùng vẫn chỉnh tay được graph.
+
+## LUẬT ORCHESTRATION (BẮT BUỘC — áp dụng cho MỌI session trong dự án này)
+
+1. **Fable (claude-fable-5) CHỈ làm orchestrator**: lập kế hoạch, viết spec/interface, chia task, review code, verify kết quả, chạy test, tổng hợp báo cáo. Fable **KHÔNG trực tiếp viết code implementation** (source, test, config, scaffold).
+2. **Mọi việc viết code phải delegate cho subagent chạy Sonnet 5**:
+   - Agent tool: `model: "sonnet"`
+   - Workflow `agent()`: `opts.model: 'sonnet'`
+3. Review agent chạy model mặc định (Fable) — đó là công việc orchestration/quality-control, không phải implementation.
+4. **Bước verify (adversarial verification của findings) dùng Opus** (`model: 'opus'`) — yêu cầu của user "cho chắc ăn".
+5. Spec, tài liệu thiết kế, CLAUDE.md, memory: Fable viết trực tiếp được (đây là artifact orchestration).
+
+## Tech stack (bắt buộc)
+
+- Monorepo pnpm workspaces: `apps/web` (frontend) + `apps/server` (backend)
+- Frontend: Vite + React + TypeScript, React Flow (`@xyflow/react`), Zustand, TailwindCSS
+- Backend: Node.js + Fastify + TypeScript (ESM, strict)
+- Storage: SQLite (`better-sqlite3`) — workflows, runs, node outputs. File media lưu `./data/artifacts/`, DB chỉ lưu path + metadata
+- Không auth ở MVP (local, single user)
+
+## Nguyên tắc thiết kế (ưu tiên số 1: engine logic, không phải UI đẹp)
+
+1. **Workflow là JSON thuần** — schema rõ ràng (zod), versioned. UI chỉ là view; có panel JSON view sửa raw JSON, graph tự cập nhật.
+2. **Node = pure function có schema**: `inputs`/`outputs` (typed ports), `params` (zod), `execute(inputs, params, ctx) => outputs`. Đăng ký qua NodeRegistry — thêm node type mới = thêm 1 file.
+3. **Port type system**: `text | image | video | audio | json | number | any`. Engine validate kết nối (không cho `text → video`; `any` nối được mọi thứ).
+4. **Execution engine**: topological sort trên DAG, detect cycle, chạy node độc lập song song, node lỗi → fail branch đó (downstream skipped) nhưng branch khác chạy tiếp. Mỗi run lưu trạng thái từng node (`pending/running/success/error/skipped`) + output + logs vào DB.
+5. **Caching**: `hash(nodeType + params + inputs)` → re-run không gọi lại API nếu không đổi gì. Có "force re-run" per node.
+6. **Async polling generic**: fal.ai/Vbee dùng queue API (submit → poll → result). Engine hỗ trợ qua `ctx.poll()` với exponential backoff + timeout.
+
+## Node types MVP
+
+- **LLM (OpenRouter)**: `llm.generate` (model, system prompt, temperature; in: `prompt:text` + optional `context:text`; out: `text`), `llm.transform` (biến đổi text theo instruction)
+- **fal.ai**: `fal.image` (model id tự do vd `fal-ai/flux/dev`, size, seed; in: `prompt:text` + optional `image`; out: `image`), `fal.video` (model id tự do, duration, aspect ratio; in: `prompt:text` + optional `image`; out: `video`). Queue API: `https://queue.fal.run/{model_id}` submit → poll → fetch → download về `./data/artifacts/`
+- **Vbee TTS**: `vbee.tts` (voice_code, speed, format; in: `text:text`; out: `audio`). Async: POST → poll → download. **Chi tiết API lấy từ skill `vbee-tts` có sẵn trong session — dùng skill này thay vì đoán endpoint.**
+- **Utility**: `input.text`, `input.file`, `text.template` (ghép text theo `{{slot}}`), `output.collect`
+
+Lưu ý chủ đích: model id của fal.ai là string tự do (không hardcode dropdown) vì model trending đổi liên tục.
+
+## AI Agent layer (điểm khác biệt chính)
+
+- `POST /api/agent/generate-workflow`: mô tả tự nhiên → agent gọi OpenRouter (default lấy từ `OPENROUTER_DEFAULT_MODEL`, hiện là `x-ai/grok-4.5`, configurable) với system prompt chứa NodeRegistry schema **tự generate từ code** + JSON schema workflow + few-shot. Output validate bằng zod; invalid → gửi lỗi lại cho LLM sửa (tối đa 2 retry).
+- `POST /api/agent/edit-node`: workflow + node id + instruction → trả về **JSON patch** (add/remove/update node, add/remove edge) — apply patch rồi validate.
+- UI: mỗi node có nút ✨ chat edit node; toolbar có ô "Describe workflow".
+
+## Frontend (tối giản)
+
+Canvas React Flow (drag từ sidebar theo category, params panel bên phải), edge validation theo port type (màu port theo type), nút Run + trạng thái realtime qua SSE + preview inline (thumbnail/audio/video player), panel JSON view, danh sách workflows + lịch sử runs, Settings page nhập 3 API key (OpenRouter, fal.ai, Vbee app_id + token) — **lưu server-side, KHÔNG bao giờ gửi key xuống client**.
+
+## Cấu trúc
+
+```
+apps/server/src/{engine,nodes,agent,routes,db}
+apps/web/src/{canvas,panels,store}
+data/artifacts/
+docs/            # spec từng bước (orchestrator viết)
+```
+
+## Thứ tự thực hiện & checkpoint
+
+1. ✅ Workflow JSON schema (zod) + NodeRegistry + execution engine + unit test với mock nodes (topo sort, cycle, parallel, cache, error branch) — spec: `docs/SPEC-step1.md`
+2. ☐ 3 nhóm node thật (OpenRouter, fal, Vbee) — retry + timeout + error message rõ
+3. ☐ API routes + SSE run status
+4. ☐ Frontend canvas + run + preview
+5. ☐ Agent layer (generate + edit-node)
+6. ☐ Polish: JSON view, cache indicator, settings page
+
+**Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
+
+## API keys & config
+
+Secrets nằm trong `.env.local` ở root (gitignored, đã có sẵn giá trị thật — KHÔNG log ra console, KHÔNG gửi xuống client, KHÔNG paste vào prompt của subagent). Server đọc các biến:
+
+- `OPENROUTER_API_KEY`, `OPENROUTER_DEFAULT_MODEL` (hiện: `x-ai/grok-4.5`)
+- `FAL_KEY` (format `key_id:key_secret`)
+- `VBEE_APP_ID`, `VBEE_TOKEN`
+
+Settings page (bước 6) ghi đè/ cập nhật các giá trị này server-side.
+
+## Lệnh thường dùng
+
+```bash
+pnpm install            # root
+pnpm -r test            # chạy toàn bộ unit test (vitest)
+pnpm --filter server test
+```
