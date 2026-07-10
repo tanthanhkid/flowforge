@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { NodeSpec, WorkflowNode } from '../src/api/types.ts';
 import { NodeCard } from '../src/canvas/NodeCard.tsx';
 import { PORT_COLORS } from '../src/canvas/portColors.ts';
+import { useFlowStore } from '../src/store/flow.ts';
 import type { FlowNode, FlowNodeData } from '../src/canvas/types.ts';
 
 // vitest.config.ts doesn't set `test.globals: true`, so @testing-library/
@@ -144,5 +145,18 @@ describe('NodeCard', () => {
   it('does not render a preview when the node has not run successfully', () => {
     renderNode({ node: workflowNode, spec, runState: { state: 'pending', logs: [] } });
     expect(document.querySelector('img')).toBeNull();
+  });
+
+  it('shows a 🔁 force chip when the node is queued in forceNodeIds (SPEC-step6.md §3)', () => {
+    useFlowStore.setState({ forceNodeIds: ['n1'] });
+    renderNode({ node: workflowNode, spec, runState: undefined });
+    expect(screen.getByText(/force/)).toBeInTheDocument();
+    useFlowStore.setState({ forceNodeIds: [] });
+  });
+
+  it('does not show the force chip when the node is not queued', () => {
+    useFlowStore.setState({ forceNodeIds: [] });
+    renderNode({ node: workflowNode, spec, runState: undefined });
+    expect(screen.queryByText(/force/)).toBeNull();
   });
 });

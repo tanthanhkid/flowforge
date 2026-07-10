@@ -17,6 +17,7 @@ import { registerAgentRoutes } from './routes/agent.js';
 import { registerArtifactsRoutes } from './routes/artifacts.js';
 import { registerRegistryRoutes } from './routes/registry.js';
 import { registerRunsRoutes } from './routes/runs.js';
+import { registerSettingsRoutes } from './routes/settings.js';
 import { registerWorkflowsRoutes } from './routes/workflows.js';
 import { RunManager } from './runManager.js';
 
@@ -28,6 +29,8 @@ export interface ServerOpts {
   artifactsDir?: string;
   /** Default: false */
   logger?: boolean;
+  /** Env file read/written by /api/settings. Default: <repoRoot>/.env.local */
+  envFilePath?: string;
 }
 
 declare module 'fastify' {
@@ -46,6 +49,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   const repoRoot = defaultRepoRoot();
   const dbPath = opts.dbPath ?? path.join(repoRoot, 'data', 'flowforge.db');
   const artifactsDir = opts.artifactsDir ?? path.join(repoRoot, 'data', 'artifacts');
+  const envFilePath = opts.envFilePath ?? path.join(repoRoot, '.env.local');
 
   if (dbPath !== ':memory:') {
     await mkdir(path.dirname(dbPath), { recursive: true });
@@ -88,6 +92,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   registerRunsRoutes(app, { runManager, workflowsRepo, db });
   registerArtifactsRoutes(app, artifactsDir);
   registerAgentRoutes(app, { registry });
+  registerSettingsRoutes(app, { envFilePath });
 
   app.addHook('onClose', async () => {
     db.close();

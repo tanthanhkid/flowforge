@@ -63,8 +63,8 @@ docs/            # spec từng bước (orchestrator viết)
 2. ✅ 3 nhóm node thật (OpenRouter, fal, Vbee) — retry + timeout + error message rõ — spec: `docs/SPEC-step2.md`
 3. ✅ API routes + SSE run status — spec: `docs/SPEC-step3.md`
 4. ✅ Frontend canvas + run + preview — spec: `docs/SPEC-step4.md`
-5. ☐ Agent layer (generate + edit-node) — spec: `docs/SPEC-step5.md`
-6. ☐ Polish: JSON view, cache indicator, settings page
+5. ✅ Agent layer (generate + edit-node) — spec: `docs/SPEC-step5.md`
+6. ☐ Polish: JSON view, cache indicator, settings page — spec: `docs/SPEC-step6.md`
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 

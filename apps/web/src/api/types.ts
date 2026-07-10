@@ -193,3 +193,15 @@ export interface EditNodeResult {
   ops: unknown[];
   attempts: number;
 }
+
+// ---- routes/settings.ts (GET/PUT /api/settings, SPEC-step6.md §1) -------
+
+export interface SettingSummary {
+  key: string;
+  isSet: boolean;
+  /** `'••••' + last 4 chars`, or null when unset. Never the full value. */
+  preview: string | null;
+  secret: boolean;
+  /** Only present for non-secret keys, and only when set. */
+  value?: string;
+}

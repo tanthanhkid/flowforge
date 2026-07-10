@@ -5,8 +5,10 @@
 import { useEffect, useState } from 'react';
 import { FlowCanvas } from './canvas/FlowCanvas.tsx';
 import { Sidebar } from './canvas/Sidebar.tsx';
+import { JsonView } from './panels/JsonView.tsx';
 import { ParamsPanel } from './panels/ParamsPanel.tsx';
 import { RunsPanel } from './panels/RunsPanel.tsx';
+import { SettingsPage } from './panels/SettingsPage.tsx';
 import { Toolbar } from './panels/Toolbar.tsx';
 import { WorkflowList } from './panels/WorkflowList.tsx';
 import { useFlowStore } from './store/flow.ts';
@@ -17,6 +19,8 @@ function App() {
   const loadRegistry = useFlowStore((state) => state.loadRegistry);
   const [rightTab, setRightTab] = useState<RightTab>('params');
   const [showWorkflowList, setShowWorkflowList] = useState(false);
+  const [showJsonView, setShowJsonView] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   useEffect(() => {
     loadRegistry().catch((err: unknown) => {
@@ -26,7 +30,11 @@ function App() {
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-50 text-slate-900">
-      <Toolbar onOpenWorkflowList={() => setShowWorkflowList(true)} />
+      <Toolbar
+        onOpenWorkflowList={() => setShowWorkflowList(true)}
+        onOpenJsonView={() => setShowJsonView(true)}
+        onOpenSettings={() => setShowSettings(true)}
+      />
 
       <div className="flex min-h-0 flex-1">
         <Sidebar />
@@ -61,6 +69,8 @@ function App() {
       </div>
 
       {showWorkflowList && <WorkflowList onClose={() => setShowWorkflowList(false)} />}
+      {showJsonView && <JsonView onClose={() => setShowJsonView(false)} />}
+      {showSettings && <SettingsPage onClose={() => setShowSettings(false)} />}
     </div>
   );
 }

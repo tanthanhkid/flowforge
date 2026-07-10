@@ -17,9 +17,11 @@ function errorMessage(err: unknown): string {
 
 export interface ToolbarProps {
   onOpenWorkflowList: () => void;
+  onOpenJsonView: () => void;
+  onOpenSettings: () => void;
 }
 
-export function Toolbar({ onOpenWorkflowList }: ToolbarProps) {
+export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: ToolbarProps) {
   const workflow = useFlowStore((s) => s.workflow);
   const dirty = useFlowStore((s) => s.dirty);
   const runStatus = useFlowStore((s) => s.runStatus);
@@ -123,6 +125,22 @@ export function Toolbar({ onOpenWorkflowList }: ToolbarProps) {
     }
   }
 
+  // "Run ⚡ bỏ cache" (SPEC-step6.md §3): force every node in the workflow,
+  // independent of whatever the user queued via forceNodeIds (that queue is
+  // left untouched — this is a one-off "skip the cache entirely" run).
+  async function handleRunForceAll(): Promise<void> {
+    setLastError(null);
+    const allNodeIds = workflow.nodes.map((n) => n.id);
+    try {
+      const started = await run(allNodeIds);
+      if (!started) {
+        setShowIssues(true);
+      }
+    } catch (err) {
+      setLastError(errorMessage(err));
+    }
+  }
+
   function handleNameChange(event: ChangeEvent<HTMLInputElement>): void {
     setWorkflowJson({ ...workflow, name: event.target.value });
   }
@@ -193,6 +211,16 @@ export function Toolbar({ onOpenWorkflowList }: ToolbarProps) {
         {isRunning ? 'Running…' : '▶ Run'}
       </button>
 
+      <button
+        type="button"
+        onClick={() => void handleRunForceAll()}
+        disabled={isRunning}
+        title="Chạy lại toàn bộ node, bỏ qua cache"
+        className="rounded border border-amber-400 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 disabled:opacity-50"
+      >
+        Run ⚡ bỏ cache
+      </button>
+
       <div className="relative">
         <button
           type="button"
@@ -250,11 +278,22 @@ export function Toolbar({ onOpenWorkflowList }: ToolbarProps) {
       )}
 
       <div className="ml-auto flex items-center gap-2">
+        <button type="button" onClick={onOpenJsonView} className="rounded border border-slate-300 px-3 py-1 text-xs">
+          {'{} JSON'}
+        </button>
         <button type="button" onClick={newWorkflow} className="rounded border border-slate-300 px-3 py-1 text-xs">
           New
         </button>
         <button type="button" onClick={onOpenWorkflowList} className="rounded border border-slate-300 px-3 py-1 text-xs">
           Workflows
+        </button>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          title="Settings"
+          className="rounded border border-slate-300 px-3 py-1 text-xs"
+        >
+          ⚙
         </button>
       </div>
     </header>

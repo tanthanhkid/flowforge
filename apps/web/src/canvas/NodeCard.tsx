@@ -59,6 +59,7 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
   const workflow = useFlowStore((s) => s.workflow);
   const setWorkflowJson = useFlowStore((s) => s.setWorkflowJson);
   const selectNode = useFlowStore((s) => s.selectNode);
+  const isForced = useFlowStore((s) => s.forceNodeIds.includes(node.id));
 
   const [showEdit, setShowEdit] = useState(false);
   const [instruction, setInstruction] = useState('');
@@ -98,6 +99,14 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
           <span className={`rounded px-1.5 py-0.5 text-[10px] ${categoryClass(spec?.category ?? '')}`}>
             {spec?.category ?? '?'}
           </span>
+          {isForced && (
+            <span
+              title="Sẽ force re-run ở lần Run kế tiếp"
+              className="rounded bg-amber-100 px-1.5 py-0.5 text-[10px] text-amber-700"
+            >
+              🔁 force
+            </span>
+          )}
           <button
             type="button"
             title="Edit this node with AI"

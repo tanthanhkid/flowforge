@@ -15,6 +15,7 @@ import type {
   RunSnapshot,
   RunStateEvent,
   RunSummary,
+  SettingSummary,
   ValidationIssue,
   Workflow,
   WorkflowSummary,
@@ -130,6 +131,21 @@ export function editNodeWithInstruction(
     method: 'POST',
     body: JSON.stringify({ workflow, nodeId, instruction, model }),
   });
+}
+
+// ---- settings (SPEC-step6.md §1) ----------------------------------------
+
+export async function getSettings(): Promise<SettingSummary[]> {
+  const res = await request<{ settings: SettingSummary[] }>('/api/settings');
+  return res.settings;
+}
+
+export async function putSettings(updates: Record<string, string>): Promise<SettingSummary[]> {
+  const res = await request<{ settings: SettingSummary[] }>('/api/settings', {
+    method: 'PUT',
+    body: JSON.stringify(updates),
+  });
+  return res.settings;
 }
 
 // ---- SSE run events (GET /api/runs/:id/events) ---------------------------
