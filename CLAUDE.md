@@ -64,7 +64,9 @@ docs/            # spec từng bước (orchestrator viết)
 3. ✅ API routes + SSE run status — spec: `docs/SPEC-step3.md`
 4. ✅ Frontend canvas + run + preview — spec: `docs/SPEC-step4.md`
 5. ✅ Agent layer (generate + edit-node) — spec: `docs/SPEC-step5.md`
-6. ☐ Polish: JSON view, cache indicator, settings page — spec: `docs/SPEC-step6.md`
+6. ✅ Polish: JSON view, cache indicator, settings page — spec: `docs/SPEC-step6.md`
+
+**MVP HOÀN TẤT 2026-07-10** — 177 server + 68 web tests. Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 
