@@ -17,6 +17,14 @@ export interface EngineOptions {
 export interface RunOptions {
   forceNodes?: string[];
   signal?: AbortSignal;
+  /**
+   * Explicit run id to use instead of generating a fresh one (SPEC-step3.md
+   * §3). RunManager.start() needs to know the run id synchronously — before
+   * engine.run()'s promise settles — so it can hand `{ runId }` back to the
+   * caller and register SSE subscribers against it. Optional and
+   * backward-compatible: omitted, behavior is unchanged (randomUUID()).
+   */
+  runId?: string;
 }
 
 export interface NodeResult {
@@ -71,7 +79,7 @@ export class Engine extends EventEmitter {
     }
     const wf = validation.workflow;
 
-    const runId = randomUUID();
+    const runId = options.runId ?? randomUUID();
     const forceNodes = new Set(options.forceNodes ?? []);
     const runSignal = options.signal ?? new AbortController().signal;
 

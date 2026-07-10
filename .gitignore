@@ -3,4 +3,6 @@ dist
 data/artifacts
 .env.local
 *.db
+*.db-shm
+*.db-wal
 .DS_Store

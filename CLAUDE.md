@@ -60,8 +60,8 @@ docs/            # spec từng bước (orchestrator viết)
 ## Thứ tự thực hiện & checkpoint
 
 1. ✅ Workflow JSON schema (zod) + NodeRegistry + execution engine + unit test với mock nodes (topo sort, cycle, parallel, cache, error branch) — spec: `docs/SPEC-step1.md`
-2. ☐ 3 nhóm node thật (OpenRouter, fal, Vbee) — retry + timeout + error message rõ
-3. ☐ API routes + SSE run status
+2. ✅ 3 nhóm node thật (OpenRouter, fal, Vbee) — retry + timeout + error message rõ — spec: `docs/SPEC-step2.md`
+3. ☐ API routes + SSE run status — spec: `docs/SPEC-step3.md`
 4. ☐ Frontend canvas + run + preview
 5. ☐ Agent layer (generate + edit-node)
 6. ☐ Polish: JSON view, cache indicator, settings page

@@ -108,6 +108,21 @@ export function createDelayNode(): {
 }
 
 // ---------------------------------------------------------------------------
+// mock.hang — execute() returns a promise that never settles. Used to freeze
+// a run at status='running' indefinitely (e.g. to simulate a process
+// restart orphaning a run row — see api-sse.test.ts's orphaned-run test).
+// ---------------------------------------------------------------------------
+export const mockHangNode: NodeDefinition<Record<string, never>> = {
+  type: 'mock.hang',
+  category: 'utility',
+  title: 'Mock Hang',
+  inputs: {},
+  outputs: { text: { type: 'text' } },
+  paramsSchema: z.object({}),
+  execute: () => new Promise(() => {}),
+};
+
+// ---------------------------------------------------------------------------
 // mock.fail — execute always throws new Error('boom').
 // ---------------------------------------------------------------------------
 export const mockFailNode: NodeDefinition<Record<string, never>> = {
