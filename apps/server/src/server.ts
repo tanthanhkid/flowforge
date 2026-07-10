@@ -13,6 +13,7 @@ import { WorkflowsRepo } from './db/workflows.js';
 import { Engine, WorkflowValidationError } from './engine/executor.js';
 import type { NodeRegistry } from './engine/registry.js';
 import { createDefaultRegistry } from './nodes/index.js';
+import { registerAgentRoutes } from './routes/agent.js';
 import { registerArtifactsRoutes } from './routes/artifacts.js';
 import { registerRegistryRoutes } from './routes/registry.js';
 import { registerRunsRoutes } from './routes/runs.js';
@@ -86,6 +87,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   registerWorkflowsRoutes(app, { workflowsRepo, registry });
   registerRunsRoutes(app, { runManager, workflowsRepo, db });
   registerArtifactsRoutes(app, artifactsDir);
+  registerAgentRoutes(app, { registry });
 
   app.addHook('onClose', async () => {
     db.close();

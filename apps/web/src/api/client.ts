@@ -7,6 +7,8 @@
  */
 import type {
   CreateRunBody,
+  EditNodeResult,
+  GenerateWorkflowResult,
   NodeLogEvent,
   NodeSpec,
   NodeStateEvent,
@@ -110,6 +112,24 @@ export function listRuns(params?: { workflowId?: string; limit?: number }): Prom
 
 export function getRun(id: string): Promise<RunSnapshot> {
   return request(`/api/runs/${encodeURIComponent(id)}`);
+}
+
+// ---- agent (SPEC-step5.md §5) -------------------------------------------
+
+export function generateWorkflowFromDescription(description: string, model?: string): Promise<GenerateWorkflowResult> {
+  return request('/api/agent/generate-workflow', { method: 'POST', body: JSON.stringify({ description, model }) });
+}
+
+export function editNodeWithInstruction(
+  workflow: Workflow,
+  nodeId: string,
+  instruction: string,
+  model?: string,
+): Promise<EditNodeResult> {
+  return request('/api/agent/edit-node', {
+    method: 'POST',
+    body: JSON.stringify({ workflow, nodeId, instruction, model }),
+  });
 }
 
 // ---- SSE run events (GET /api/runs/:id/events) ---------------------------

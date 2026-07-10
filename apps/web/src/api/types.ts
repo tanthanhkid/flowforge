@@ -180,3 +180,16 @@ export interface RunStateEvent {
   runId: string;
   status: RunStatus;
 }
+
+// ---- routes/agent.ts (POST /api/agent/generate-workflow, /edit-node) -----
+
+export interface GenerateWorkflowResult {
+  workflow: Workflow;
+  attempts: number;
+}
+
+export interface EditNodeResult {
+  workflow: Workflow;
+  ops: unknown[];
+  attempts: number;
+}

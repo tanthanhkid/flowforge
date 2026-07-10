@@ -1,10 +1,14 @@
 /**
  * Top toolbar (SPEC-step4.md §4): editable workflow name, Save (disabled
  * when !dirty), Validate (issue list, click -> select the offending node),
- * ▶ Run (disabled while running, spinner + status while running), New, and
- * a button to open the WorkflowList overlay.
+ * ▶ Run (disabled while running, spinner + status while running), New, a
+ * button to open the WorkflowList overlay, and (SPEC-step5.md §6) a
+ * "✨ Describe" panel that turns a natural-language description into a
+ * whole workflow via POST /api/agent/generate-workflow.
  */
 import { useState, type ChangeEvent } from 'react';
+import { ApiError, generateWorkflowFromDescription } from '../api/client.ts';
+import type { ValidationIssue } from '../api/types.ts';
 import { useFlowStore } from '../store/flow.ts';
 
 function errorMessage(err: unknown): string {
@@ -38,7 +42,40 @@ export function Toolbar({ onOpenWorkflowList }: ToolbarProps) {
   // feedback, making Save/Run look like dead buttons.
   const [lastError, setLastError] = useState<string | null>(null);
 
+  // ---- ✨ Describe panel (SPEC-step5.md §6) ------------------------------
+  const [showDescribe, setShowDescribe] = useState(false);
+  const [description, setDescription] = useState('');
+  const [generating, setGenerating] = useState(false);
+  const [describeError, setDescribeError] = useState<string | null>(null);
+  const [describeIssues, setDescribeIssues] = useState<ValidationIssue[]>([]);
+
   const isRunning = runStatus === 'running';
+
+  async function handleGenerate(): Promise<void> {
+    // Overwriting an in-progress edit the user hasn't saved yet is
+    // destructive — confirm first (spec §6: "nếu workflow hiện tại dirty
+    // thì confirm trước khi ghi đè").
+    if (dirty && !window.confirm('Workflow hiện tại chưa lưu sẽ bị ghi đè. Tiếp tục?')) {
+      return;
+    }
+    setGenerating(true);
+    setDescribeError(null);
+    setDescribeIssues([]);
+    try {
+      const result = await generateWorkflowFromDescription(description);
+      setWorkflowJson(result.workflow);
+      setShowDescribe(false);
+      setDescription('');
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 422) {
+        setDescribeIssues(err.issues ?? []);
+      } else {
+        setDescribeError(errorMessage(err));
+      }
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   async function handleSave(): Promise<void> {
     setSaving(true);
@@ -155,6 +192,54 @@ export function Toolbar({ onOpenWorkflowList }: ToolbarProps) {
         {isRunning && <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />}
         {isRunning ? 'Running…' : '▶ Run'}
       </button>
+
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setShowDescribe((v) => !v)}
+          className="rounded border border-slate-300 px-3 py-1 text-xs"
+        >
+          ✨ Describe
+        </button>
+        {showDescribe && (
+          <div className="absolute left-0 top-full z-10 mt-1 w-80 rounded border border-slate-200 bg-white p-2 shadow-lg">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold">Tạo workflow từ mô tả</span>
+              <button type="button" onClick={() => setShowDescribe(false)} className="text-xs text-slate-400">
+                ✕
+              </button>
+            </div>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Mô tả workflow bạn muốn tạo…"
+              rows={4}
+              className="mb-2 w-full rounded border border-slate-200 p-1 text-xs"
+            />
+            <button
+              type="button"
+              onClick={() => void handleGenerate()}
+              disabled={generating || description.trim().length < 3}
+              className="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {generating && (
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              )}
+              {generating ? 'Generating…' : 'Generate'}
+            </button>
+            {describeError && <p className="mt-1 text-xs text-red-600">{describeError}</p>}
+            {describeIssues.length > 0 && (
+              <ul className="mt-1 flex flex-col gap-1">
+                {describeIssues.map((issue, i) => (
+                  <li key={`${issue.code}-${i}`} className="text-xs text-red-600">
+                    [{issue.code}] {issue.message}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
 
       {runStatus && <span className="text-xs text-slate-400">status: {runStatus}</span>}
 

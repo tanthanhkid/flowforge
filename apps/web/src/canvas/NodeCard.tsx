@@ -2,14 +2,22 @@
  * Custom React Flow node (SPEC-step4.md §4): title + category badge header,
  * input ports left / output ports right (colored by type via portColors.ts),
  * a run-state badge footer (pending/running/success/error/skipped, +
- * ⚡cache when cacheHit), and an inline Preview of successful outputs.
+ * ⚡cache when cacheHit), an inline Preview of successful outputs, and
+ * (SPEC-step5.md §6) a ✨ button opening a popover to edit this node via
+ * natural-language instruction (POST /api/agent/edit-node).
  */
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import type { CSSProperties } from 'react';
+import { useState, type CSSProperties } from 'react';
+import { editNodeWithInstruction } from '../api/client.ts';
 import type { NodeState, PortType } from '../api/types.ts';
 import { Preview } from '../preview/Preview.tsx';
+import { useFlowStore } from '../store/flow.ts';
 import { PORT_COLORS } from './portColors.ts';
 import type { FlowNode } from './types.ts';
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : 'Unexpected error';
+}
 
 const STATE_BADGE: Record<NodeState, { label: string; className: string }> = {
   pending: { label: 'pending', className: 'bg-slate-200 text-slate-600' },
@@ -48,19 +56,92 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
   const badge = runState ? STATE_BADGE[runState.state] : undefined;
   const hasOutputs = runState?.state === 'success' && runState.outputs && Object.keys(runState.outputs).length > 0;
 
+  const workflow = useFlowStore((s) => s.workflow);
+  const setWorkflowJson = useFlowStore((s) => s.setWorkflowJson);
+  const selectNode = useFlowStore((s) => s.selectNode);
+
+  const [showEdit, setShowEdit] = useState(false);
+  const [instruction, setInstruction] = useState('');
+  const [applying, setApplying] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  async function handleApply(): Promise<void> {
+    setApplying(true);
+    setEditError(null);
+    try {
+      const result = await editNodeWithInstruction(workflow, node.id, instruction);
+      setWorkflowJson(result.workflow);
+      // setWorkflowJson clears selection when the previously selected node
+      // no longer exists — this node still does, so re-select it explicitly
+      // (spec §6: "thành công setWorkflowJson(kết quả) giữ selection").
+      selectNode(node.id);
+      setShowEdit(false);
+      setInstruction('');
+    } catch (err) {
+      setEditError(errorMessage(err));
+    } finally {
+      setApplying(false);
+    }
+  }
+
   return (
     <div
       className={`min-w-[200px] rounded-md border bg-white shadow-sm ${
         selected ? 'border-blue-500 ring-2 ring-blue-400' : 'border-slate-300'
       }`}
     >
-      <div className="flex items-center justify-between gap-2 border-b border-slate-200 px-2 py-1">
+      <div className="relative flex items-center justify-between gap-2 border-b border-slate-200 px-2 py-1">
         <span className="truncate text-xs font-semibold" title={node.id}>
           {spec?.title ?? node.type}
         </span>
-        <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] ${categoryClass(spec?.category ?? '')}`}>
-          {spec?.category ?? '?'}
-        </span>
+        <div className="flex shrink-0 items-center gap-1">
+          <span className={`rounded px-1.5 py-0.5 text-[10px] ${categoryClass(spec?.category ?? '')}`}>
+            {spec?.category ?? '?'}
+          </span>
+          <button
+            type="button"
+            title="Edit this node with AI"
+            onClick={(e) => {
+              e.stopPropagation();
+              setShowEdit((v) => !v);
+            }}
+            className="rounded px-1 text-xs hover:bg-slate-100"
+          >
+            ✨
+          </button>
+        </div>
+        {showEdit && (
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="absolute left-0 top-full z-10 mt-1 w-64 rounded border border-slate-200 bg-white p-2 shadow-lg"
+          >
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold">Sửa node bằng AI</span>
+              <button type="button" onClick={() => setShowEdit(false)} className="text-xs text-slate-400">
+                ✕
+              </button>
+            </div>
+            <textarea
+              value={instruction}
+              onChange={(e) => setInstruction(e.target.value)}
+              placeholder="Mô tả thay đổi bạn muốn…"
+              rows={3}
+              className="mb-2 w-full rounded border border-slate-200 p-1 text-xs"
+            />
+            <button
+              type="button"
+              onClick={() => void handleApply()}
+              disabled={applying || instruction.trim().length === 0}
+              className="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
+            >
+              {applying && (
+                <span className="h-3 w-3 animate-spin rounded-full border-2 border-white border-t-transparent" />
+              )}
+              {applying ? 'Applying…' : 'Apply'}
+            </button>
+            {editError && <p className="mt-1 text-xs text-red-600">{editError}</p>}
+          </div>
+        )}
       </div>
 
       <div className="flex justify-between gap-3 px-1 py-1.5">
