@@ -101,6 +101,7 @@ export function SettingsPage({ onClose }: SettingsPageProps) {
                 </span>
                 <input
                   type={setting.secret ? 'password' : 'text'}
+                  data-testid={`settings-field-${setting.key}`}
                   value={setting.secret ? (drafts[setting.key] ?? '') : (drafts[setting.key] ?? setting.value ?? '')}
                   placeholder={setting.secret ? (setting.preview ?? 'chưa set') : undefined}
                   onChange={(event) => handleChange(setting.key, event.target.value)}

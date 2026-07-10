@@ -1,0 +1,13 @@
+{
+  "name": "e2e",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "playwright test tests/app.spec.ts",
+    "test:real": "E2E_REAL=1 playwright test tests/real-media.spec.ts"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.1"
+  }
+}

@@ -156,6 +156,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
 
       <button
         type="button"
+        data-testid="save-btn"
         onClick={() => void handleSave()}
         disabled={!dirty || saving}
         className="rounded border border-slate-300 px-3 py-1 text-xs disabled:opacity-40"
@@ -166,6 +167,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
       <div className="relative">
         <button
           type="button"
+          data-testid="validate-btn"
           onClick={() => void handleValidate()}
           disabled={validating}
           className="rounded border border-slate-300 px-3 py-1 text-xs disabled:opacity-40"
@@ -203,6 +205,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
 
       <button
         type="button"
+        data-testid="run-btn"
         onClick={() => void handleRun()}
         disabled={isRunning}
         className="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
@@ -213,6 +216,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
 
       <button
         type="button"
+        data-testid="run-force-btn"
         onClick={() => void handleRunForceAll()}
         disabled={isRunning}
         title="Chạy lại toàn bộ node, bỏ qua cache"
@@ -224,6 +228,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
       <div className="relative">
         <button
           type="button"
+          data-testid="describe-btn"
           onClick={() => setShowDescribe((v) => !v)}
           className="rounded border border-slate-300 px-3 py-1 text-xs"
         >
@@ -238,6 +243,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
               </button>
             </div>
             <textarea
+              data-testid="describe-input"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               placeholder="Mô tả workflow bạn muốn tạo…"
@@ -246,6 +252,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
             />
             <button
               type="button"
+              data-testid="describe-generate"
               onClick={() => void handleGenerate()}
               disabled={generating || description.trim().length < 3}
               className="flex items-center gap-1.5 rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
@@ -278,7 +285,12 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
       )}
 
       <div className="ml-auto flex items-center gap-2">
-        <button type="button" onClick={onOpenJsonView} className="rounded border border-slate-300 px-3 py-1 text-xs">
+        <button
+          type="button"
+          data-testid="json-view-btn"
+          onClick={onOpenJsonView}
+          className="rounded border border-slate-300 px-3 py-1 text-xs"
+        >
           {'{} JSON'}
         </button>
         <button type="button" onClick={newWorkflow} className="rounded border border-slate-300 px-3 py-1 text-xs">
@@ -289,6 +301,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
         </button>
         <button
           type="button"
+          data-testid="settings-btn"
           onClick={onOpenSettings}
           title="Settings"
           className="rounded border border-slate-300 px-3 py-1 text-xs"

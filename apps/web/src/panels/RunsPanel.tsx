@@ -65,6 +65,7 @@ export function RunsPanel() {
           <li key={run.id}>
             <button
               type="button"
+              data-testid="run-history-item"
               onClick={() => void openRun(run.id)}
               className={`flex w-full items-center justify-between rounded border px-2 py-1 text-left text-xs hover:bg-slate-50 ${
                 run.id === runId ? 'border-blue-400 bg-blue-50' : 'border-slate-200'

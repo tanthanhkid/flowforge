@@ -1,0 +1,314 @@
+/**
+ * FREE tier E2E (SPEC-step7.md §3): only utility nodes (`input.text`,
+ * `text.template`, `output.collect`) — zero API cost, safe to run anytime.
+ * Must pass 100% reliably, twice in a row.
+ */
+import { expect, test, type Page } from '@playwright/test';
+
+const PALETTE_TYPES = [
+  'input.text',
+  'input.file',
+  'text.template',
+  'output.collect',
+  'llm.generate',
+  'llm.transform',
+  'fal.image',
+  'fal.video',
+  'vbee.tts',
+];
+
+interface WorkflowNodeLike {
+  id: string;
+  type: string;
+  params: Record<string, unknown>;
+  position?: { x: number; y: number };
+}
+
+interface WorkflowLike {
+  version: 1;
+  id: string;
+  name: string;
+  nodes: WorkflowNodeLike[];
+  edges: Array<{ id: string; from: { node: string; port: string }; to: { node: string; port: string } }>;
+}
+
+function sampleWorkflow(): WorkflowLike {
+  return {
+    version: 1,
+    id: crypto.randomUUID(),
+    name: `e2e sample ${Date.now()}`,
+    nodes: [
+      { id: 'input_1', type: 'input.text', params: { value: 'xin chào' }, position: { x: 40, y: 40 } },
+      {
+        id: 'text_template_1',
+        type: 'text.template',
+        params: { template: 'Lời chào: {{a}}' },
+        position: { x: 320, y: 40 },
+      },
+      { id: 'output_collect_1', type: 'output.collect', params: {}, position: { x: 600, y: 40 } },
+    ],
+    edges: [
+      { id: 'e_1', from: { node: 'input_1', port: 'text' }, to: { node: 'text_template_1', port: 'a' } },
+      { id: 'e_2', from: { node: 'text_template_1', port: 'text' }, to: { node: 'output_collect_1', port: 'in1' } },
+    ],
+  };
+}
+
+/**
+ * Clicks a run button and waits for the run *it actually triggers* to
+ * finish — not for stale UI left over from a previous run.
+ *
+ * A previous free-tier run (utility nodes only, no real I/O) can complete
+ * so fast that the store's synchronous `runStatus: 'running'` reset
+ * (apps/web/src/store/flow.ts `run()`) and the SSE-driven flip back to
+ * `'success'` land in the same UI tick — there is no reliable window in
+ * which the DOM ever shows "status: running" for Playwright to observe.
+ * Waiting on that text is therefore not just occasionally flaky, it can be
+ * unobservable by construction, and previously the test fell back to
+ * reading whatever `data-state`/`status:` text was already on screen —
+ * which could be the *previous* run's "success", making the wait vacuous.
+ *
+ * Instead: capture the `POST /api/runs` response to learn the new run's
+ * id, then poll `GET /api/runs/:id` (server truth, independent of any UI
+ * render race) until that specific run reaches a terminal status. Only
+ * then assert the UI has caught up.
+ */
+async function runAndWaitForSuccess(
+  page: Page,
+  cards: import('@playwright/test').Locator,
+  buttonTestId: string,
+): Promise<void> {
+  const responsePromise = page.waitForResponse(
+    (res) => res.request().method() === 'POST' && new URL(res.url()).pathname === '/api/runs',
+  );
+  await page.getByTestId(buttonTestId).click();
+  const response = await responsePromise;
+  const { runId } = (await response.json()) as { runId: string };
+
+  await expect
+    .poll(
+      async () => {
+        const runRes = await page.request.get(`/api/runs/${runId}`);
+        const snapshot = (await runRes.json()) as { run: { status: string } };
+        return snapshot.run.status;
+      },
+      { timeout: 20_000 },
+    )
+    .toBe('success');
+
+  const header = page.locator('header');
+  await expect(header).toContainText('status: success', { timeout: 20_000 });
+  for (const card of await cards.all()) {
+    await expect(card).toHaveAttribute('data-state', 'success', { timeout: 20_000 });
+  }
+}
+
+/** Opens the JSON view, replaces the textarea with `wf`, clicks Apply, closes the overlay. */
+async function applyWorkflowViaJsonView(page: Page, wf: WorkflowLike): Promise<void> {
+  await page.getByTestId('json-view-btn').click();
+  const textarea = page.getByTestId('json-view-textarea');
+  await textarea.click();
+  await textarea.fill(JSON.stringify(wf, null, 2));
+  await page.getByTestId('json-view-apply').click();
+  await expect(page.getByTestId('json-view-error')).toHaveCount(0);
+  await page.keyboard.press('Escape').catch(() => undefined);
+  // The overlay closes on outside-click / its own ✕ button, not Escape —
+  // click outside the panel to close it.
+  await page.mouse.click(5, 5);
+}
+
+test.describe('FlowForge — free tier (utility nodes only)', () => {
+  test('1. App load: sidebar shows all 9 node types, toolbar has its buttons', async ({ page }) => {
+    await page.goto('/');
+    for (const type of PALETTE_TYPES) {
+      await expect(page.getByTestId(`palette-${type}`)).toBeVisible();
+    }
+    await expect(page.getByTestId('save-btn')).toBeVisible();
+    await expect(page.getByTestId('validate-btn')).toBeVisible();
+    await expect(page.getByTestId('run-btn')).toBeVisible();
+    await expect(page.getByTestId('run-force-btn')).toBeVisible();
+    await expect(page.getByTestId('describe-btn')).toBeVisible();
+    await expect(page.getByTestId('json-view-btn')).toBeVisible();
+    await expect(page.getByTestId('settings-btn')).toBeVisible();
+  });
+
+  test('2. Add node from palette: clicking a palette entry adds one node-card', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('node-card')).toHaveCount(0);
+    await page.getByTestId('palette-input.text').click();
+    await expect(page.getByTestId('node-card')).toHaveCount(1);
+  });
+
+  test('3. Params edit: editing a value in ParamsPanel is reflected in the JSON view', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('palette-input.text').click();
+    await page.getByTestId('node-card').click();
+
+    const valueInput = page.locator('input[type="text"]').first();
+    await valueInput.fill('hello from e2e');
+
+    await page.getByTestId('json-view-btn').click();
+    await expect(page.getByTestId('json-view-textarea')).toContainText('hello from e2e');
+  });
+
+  test('4. Happy run: sample workflow runs to success with the expected preview text', async ({ page }) => {
+    await page.goto('/');
+    await applyWorkflowViaJsonView(page, sampleWorkflow());
+
+    await page.getByTestId('save-btn').click();
+    await page.getByTestId('run-btn').click();
+
+    const cards = page.getByTestId('node-card');
+    await expect(cards).toHaveCount(3);
+    for (const card of await cards.all()) {
+      await expect(card).toHaveAttribute('data-state', 'success', { timeout: 20_000 });
+    }
+
+    const templateCard = page.locator('[data-testid="node-card"][data-node-id="text_template_1"]');
+    await expect(templateCard.getByTestId('node-preview')).toContainText('Lời chào: xin chào');
+
+    await expect(page.locator('header')).toContainText('status: success');
+  });
+
+  test('5. Cache: a second run shows the cache badge; force-run clears it', async ({ page }) => {
+    await page.goto('/');
+    await applyWorkflowViaJsonView(page, sampleWorkflow());
+    await page.getByTestId('save-btn').click();
+
+    const cards = page.getByTestId('node-card');
+    await runAndWaitForSuccess(page, cards, 'run-btn');
+
+    // Second run of the same, unchanged workflow -> at least one node hits cache.
+    await runAndWaitForSuccess(page, cards, 'run-btn');
+    await expect(page.locator('text=⚡cache').first()).toBeVisible();
+
+    // Force re-run (bypass cache) -> the badge disappears.
+    await runAndWaitForSuccess(page, cards, 'run-force-btn');
+    await expect(page.locator('text=⚡cache')).toHaveCount(0);
+  });
+
+  test('6. JSON view error: broken JSON shows an inline error and does not touch the store', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('palette-input.text').click();
+    await expect(page.getByTestId('node-card')).toHaveCount(1);
+
+    await page.getByTestId('json-view-btn').click();
+    const textarea = page.getByTestId('json-view-textarea');
+    await textarea.click();
+    await textarea.fill('{ this is not valid json');
+    await page.getByTestId('json-view-apply').click();
+
+    await expect(page.getByTestId('json-view-error')).toBeVisible();
+    await page.mouse.click(5, 5);
+    await expect(page.getByTestId('node-card')).toHaveCount(1);
+  });
+
+  test('7. Validate: a workflow with a missing required input surfaces an issue; clicking it selects the node', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const wf: WorkflowLike = {
+      version: 1,
+      id: crypto.randomUUID(),
+      name: 'e2e invalid',
+      nodes: [{ id: 'llm_generate_1', type: 'llm.generate', params: {}, position: { x: 40, y: 40 } }],
+      edges: [],
+    };
+    await applyWorkflowViaJsonView(page, wf);
+
+    await page.getByTestId('validate-btn').click();
+    const issueButton = page.locator('button', { hasText: 'llm_generate_1' }).first();
+    // Fall back to matching any issue text if the node id isn't inlined —
+    // the important assertion is that at least one issue is listed.
+    const anyIssue = page.locator('text=/\\[.*\\]/').first();
+    if (await issueButton.count() > 0) {
+      await issueButton.click();
+    } else {
+      await expect(anyIssue).toBeVisible();
+      await anyIssue.click();
+    }
+
+    const selectedCard = page.locator('[data-testid="node-card"].ring-2, [data-testid="node-card"][class*="ring-blue"]');
+    await expect(selectedCard).toHaveCount(1);
+  });
+
+  test('8. Persistence: saved workflow survives a page reload', async ({ page }) => {
+    await page.goto('/');
+    const wf = sampleWorkflow();
+    await applyWorkflowViaJsonView(page, wf);
+    await page.getByTestId('save-btn').click();
+    await expect(page.getByTestId('save-btn')).toBeDisabled();
+
+    await page.reload();
+    await page.getByTestId('palette-input.text').waitFor();
+
+    await page.getByRole('button', { name: 'Workflows' }).click();
+    await page.getByRole('button', { name: wf.name }).click();
+
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+  });
+
+  test('9. Runs history: the Runs tab lists at least 2 runs; opening an old one shows its states', async ({ page }) => {
+    await page.goto('/');
+    await applyWorkflowViaJsonView(page, sampleWorkflow());
+    await page.getByTestId('save-btn').click();
+
+    const cards = page.getByTestId('node-card');
+    await runAndWaitForSuccess(page, cards, 'run-btn');
+    await runAndWaitForSuccess(page, cards, 'run-force-btn');
+
+    await page.getByTestId('runs-tab').click();
+    const items = page.getByTestId('run-history-item');
+    await expect(items).toHaveCount(2, { timeout: 10_000 });
+
+    await items.last().click();
+    await expect(page.getByTestId('node-card').first()).toHaveAttribute('data-state', 'success');
+  });
+
+  test('10. Settings mask: secret fields never render the raw key value', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('settings-btn').click();
+
+    const fields = page.locator('[data-testid^="settings-field-"]');
+    await expect(fields).toHaveCount(5);
+
+    for (const field of await fields.all()) {
+      const value = await field.inputValue();
+      const placeholder = await field.getAttribute('placeholder');
+      // A raw API key/secret is long and contiguous; the mask is
+      // '••••' + last 4 chars, well under 20 characters.
+      expect(value.length).toBeLessThan(20);
+      if (placeholder) expect(placeholder.length).toBeLessThan(20);
+    }
+
+    // Cross-check against the server's own masked previews (last 4 chars of
+    // each *set* secret) rather than relying only on a prefix blocklist —
+    // `sk-`/`Bearer`/`eyJ` only catches 2 of the 3 providers' known secret
+    // shapes, and a regression could echo a full secret in a DOM location a
+    // prefix check never sees (a data attribute, inline JSON, error text).
+    // The server never returns the full secret — only the masked preview —
+    // so this never reads/prints a raw value.
+    const settingsRes = await page.request.get('/api/settings');
+    const { settings } = (await settingsRes.json()) as {
+      settings: Array<{ secret: boolean; isSet: boolean; preview: string | null }>;
+    };
+    const secretSuffixes = settings
+      .filter((s) => s.secret && s.isSet && s.preview && s.preview !== '••••')
+      .map((s) => (s.preview as string).slice(-4));
+
+    const content = await page.content();
+    // No 20+ character alnum/symbol run that isn't part of the page's own
+    // markup/CSS should be present — a crude guard against a leaked secret.
+    const suspicious = content.match(/[A-Za-z0-9_-]{24,}/g) ?? [];
+    for (const token of suspicious) {
+      // Reject known secret-value prefixes (OpenRouter/Bearer bearer tokens,
+      // and Vbee's JWT tokens which start with "eyJ") ...
+      expect(token).not.toMatch(/^(sk-|Bearer|eyJ)/);
+      // ... and, regardless of prefix, reject any token that ends with the
+      // last-4 chars of a secret the server has confirmed is actually set.
+      for (const suffix of secretSuffixes) {
+        expect(token.endsWith(suffix)).toBe(false);
+      }
+    }
+  });
+});

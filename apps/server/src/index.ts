@@ -7,7 +7,16 @@ async function main(): Promise<void> {
   loadEnv();
 
   const registry = createDefaultRegistry();
-  const app = await buildServer({ logger: true, registry });
+  // FLOWFORGE_DB_PATH / FLOWFORGE_ARTIFACTS_DIR (SPEC-step7.md §1): optional,
+  // used by the e2e Playwright config to point the server at a scratch
+  // tmp dir instead of the dev `./data/` tree. Unset -> buildServer's
+  // defaults (unchanged behavior).
+  const app = await buildServer({
+    logger: true,
+    registry,
+    dbPath: process.env.FLOWFORGE_DB_PATH,
+    artifactsDir: process.env.FLOWFORGE_ARTIFACTS_DIR,
+  });
   const port = Number(process.env.PORT ?? 3001);
 
   await app.listen({ port, host: '0.0.0.0' });

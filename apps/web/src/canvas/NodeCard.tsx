@@ -87,6 +87,9 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
 
   return (
     <div
+      data-testid="node-card"
+      data-node-id={node.id}
+      data-state={runState?.state ?? 'pending'}
       className={`min-w-[200px] rounded-md border bg-white shadow-sm ${
         selected ? 'border-blue-500 ring-2 ring-blue-400' : 'border-slate-300'
       }`}
@@ -185,7 +188,7 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
       </div>
 
       {hasOutputs && runState?.outputs && (
-        <div className="border-t border-slate-100 px-2 py-1">
+        <div data-testid="node-preview" className="border-t border-slate-100 px-2 py-1">
           {Object.entries(runState.outputs).map(([key, value]) => (
             <Preview key={key} value={value} />
           ))}
@@ -194,7 +197,9 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
 
       {badge && (
         <div className="flex items-center gap-1 border-t border-slate-100 px-2 py-1" title={runState?.error}>
-          <span className={`rounded px-1.5 py-0.5 text-[10px] ${badge.className}`}>{badge.label}</span>
+          <span data-testid="node-state-badge" className={`rounded px-1.5 py-0.5 text-[10px] ${badge.className}`}>
+            {badge.label}
+          </span>
           {runState?.cached && <span className="text-[10px] text-amber-600">⚡cache</span>}
         </div>
       )}

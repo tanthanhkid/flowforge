@@ -8,3 +8,6 @@ data/artifacts
 .DS_Store
 *.tsbuildinfo
 *.bak
+e2e/.tmp
+e2e/test-results
+e2e/playwright-report

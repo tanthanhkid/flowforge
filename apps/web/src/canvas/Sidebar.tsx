@@ -50,6 +50,7 @@ export function Sidebar() {
               <button
                 key={spec.type}
                 type="button"
+                data-testid={`palette-${spec.type}`}
                 draggable
                 onDragStart={(event) => handleDragStart(event, spec.type)}
                 onClick={() => handleClickAdd(spec.type)}

@@ -56,6 +56,7 @@ function App() {
             </button>
             <button
               type="button"
+              data-testid="runs-tab"
               onClick={() => setRightTab('runs')}
               className={`flex-1 px-3 py-2 text-xs font-medium ${
                 rightTab === 'runs' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-slate-500'

@@ -114,6 +114,7 @@ export function JsonView({ onClose }: JsonViewProps) {
 
         <textarea
           aria-label="workflow json"
+          data-testid="json-view-textarea"
           value={draft}
           onChange={(event) => handleChange(event.target.value)}
           spellCheck={false}
@@ -122,7 +123,11 @@ export function JsonView({ onClose }: JsonViewProps) {
           }`}
         />
 
-        {parseError && <p className="mt-1 text-xs text-red-600">{parseError}</p>}
+        {parseError && (
+          <p data-testid="json-view-error" className="mt-1 text-xs text-red-600">
+            {parseError}
+          </p>
+        )}
 
         {issues.length > 0 && (
           <ul className="mt-2 flex max-h-24 flex-col gap-1 overflow-y-auto">
@@ -137,6 +142,7 @@ export function JsonView({ onClose }: JsonViewProps) {
         <div className="mt-2 flex items-center gap-2">
           <button
             type="button"
+            data-testid="json-view-apply"
             onClick={() => void handleApply()}
             disabled={validating}
             className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
