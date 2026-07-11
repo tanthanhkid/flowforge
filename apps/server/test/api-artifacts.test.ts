@@ -85,4 +85,22 @@ describe('api-artifacts', () => {
     const res = await rawGet(port, '/artifacts/nope.mp3');
     expect(res.status).toBe(404);
   });
+
+  // SPEC-step9.md §3: `?download=1` adds Content-Disposition: attachment so
+  // the ResultsPanel's ⬇ Tải về link saves the file under its own name.
+  it('adds Content-Disposition: attachment when ?download=1 is present', async () => {
+    writeFileSync(path.join(tmp, 'hello.mp3'), Buffer.from([1, 2, 3, 4]));
+
+    const res = await rawGet(port, '/artifacts/hello.mp3?download=1');
+    expect(res.status).toBe(200);
+    expect(res.headers['content-disposition']).toBe('attachment; filename="hello.mp3"');
+    expect(res.body.equals(Buffer.from([1, 2, 3, 4]))).toBe(true);
+  });
+
+  it('does not add Content-Disposition by default (inline)', async () => {
+    writeFileSync(path.join(tmp, 'hello.mp3'), Buffer.from([1, 2, 3, 4]));
+
+    const res = await rawGet(port, '/artifacts/hello.mp3');
+    expect(res.headers['content-disposition']).toBeUndefined();
+  });
 });

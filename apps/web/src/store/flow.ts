@@ -40,6 +40,26 @@ export interface FlowState {
   dirty: boolean;
   validationIssues: ValidationIssue[];
   /**
+   * SPEC-step9.md §1 — global "👁 Preview" toolbar toggle: when false, no
+   * NodeCard renders its inline preview regardless of that node's own
+   * collapse state. Default ON.
+   */
+  showNodePreviews: boolean;
+  /**
+   * SPEC-step9.md §2 — which right-panel tab is active. Lifted out of
+   * App.tsx's local state (it used to be) so `openRun` (called both from
+   * RunsPanel and from `run()`'s onDone) can auto-switch to "results"
+   * without threading a callback through the store.
+   */
+  rightTab: 'params' | 'runs' | 'results';
+  /**
+   * SPEC-step9.md §1 — set by NodeCard when the user clicks a node's inline
+   * preview ("mở panel Kết quả và scroll tới output node đó"). ResultsPanel
+   * consumes this once (expanding its "all nodes" section + scrolling) then
+   * clears it back to null.
+   */
+  scrollToNodeId: string | null;
+  /**
    * Not in spec §3's state list verbatim — added for the "Force re-run node
    * này" button (spec §4 ParamsPanel): nodeIds queued here get passed as
    * `force` on the *next* Toolbar ▶ Run click (SPEC-step4.md §4), then
@@ -76,6 +96,13 @@ export interface FlowState {
   /** See `forceNodeIds` above. */
   toggleForceNode(id: string): void;
   clearForceNodes(): void;
+  /** See `showNodePreviews` above. */
+  toggleNodePreviews(): void;
+  /** See `rightTab` above. */
+  setRightTab(tab: 'params' | 'runs' | 'results'): void;
+  /** See `scrollToNodeId` above. */
+  requestScrollToNode(id: string): void;
+  clearScrollToNode(): void;
 }
 
 function emptyWorkflow(): Workflow {
@@ -157,6 +184,9 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   dirty: false,
   validationIssues: [],
   forceNodeIds: [],
+  showNodePreviews: true,
+  rightTab: 'params',
+  scrollToNodeId: null,
 
   async loadRegistry() {
     const nodes = await api.getRegistry();
@@ -174,6 +204,8 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       dirty: false,
       validationIssues: [],
       forceNodeIds: [],
+      rightTab: 'params',
+      scrollToNodeId: null,
     });
   },
 
@@ -189,6 +221,8 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       dirty: false,
       validationIssues: [],
       forceNodeIds: [],
+      rightTab: 'params',
+      scrollToNodeId: null,
     });
   },
 
@@ -408,7 +442,10 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     for (const rec of snapshot.nodes) {
       nodeRuns[rec.nodeId] = nodeRunFromRecord(rec);
     }
-    set({ runId, runStatus: snapshot.run.status, nodeRuns });
+    // SPEC-step9.md §2 "auto-switch": this fires both when a *live* run
+    // finishes (run()'s onDone refetches via openRun) and when the user
+    // opens a past run from RunsPanel — both cases should land on Kết quả.
+    set({ runId, runStatus: snapshot.run.status, nodeRuns, rightTab: 'results' });
   },
 
   async validate() {
@@ -427,5 +464,21 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
 
   clearForceNodes() {
     set({ forceNodeIds: [] });
+  },
+
+  toggleNodePreviews() {
+    set((state) => ({ showNodePreviews: !state.showNodePreviews }));
+  },
+
+  setRightTab(tab) {
+    set({ rightTab: tab });
+  },
+
+  requestScrollToNode(id) {
+    set({ rightTab: 'results', scrollToNodeId: id });
+  },
+
+  clearScrollToNode() {
+    set({ scrollToNodeId: null });
   },
 }));

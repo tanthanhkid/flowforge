@@ -5,6 +5,15 @@
  * ⚡cache when cacheHit), an inline Preview of successful outputs, and
  * (SPEC-step5.md §6) a ✨ button opening a popover to edit this node via
  * natural-language instruction (POST /api/agent/edit-node).
+ *
+ * SPEC-step9.md §1: the inline preview is capped to a small, fixed-height
+ * strip (Preview's `compact` default) so the node's box never grows past a
+ * bounded height regardless of output size — otherwise a big image/video
+ * inline on the node made edges "chĩa tá lả" as node boxes resized. Each
+ * node also gets its own ▾/▸ toggle to hide/show that strip, on top of the
+ * global "👁 Preview" toolbar toggle (store `showNodePreviews`) which hides
+ * every node's preview at once. Clicking the preview strip opens the
+ * ResultsPanel (right-panel "Kết quả" tab) and scrolls to this node's entry.
  */
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useState, type CSSProperties } from 'react';
@@ -60,11 +69,18 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
   const setWorkflowJson = useFlowStore((s) => s.setWorkflowJson);
   const selectNode = useFlowStore((s) => s.selectNode);
   const isForced = useFlowStore((s) => s.forceNodeIds.includes(node.id));
+  const showNodePreviews = useFlowStore((s) => s.showNodePreviews);
+  const requestScrollToNode = useFlowStore((s) => s.requestScrollToNode);
 
   const [showEdit, setShowEdit] = useState(false);
   const [instruction, setInstruction] = useState('');
   const [applying, setApplying] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
+  // Per-node preview collapse (spec §1's ▾/▸ toggle) — local, not store
+  // state: it's this one node's own UI preference, independent of the
+  // global toolbar toggle and not worth persisting.
+  const [previewCollapsed, setPreviewCollapsed] = useState(false);
+  const showPreview = hasOutputs && showNodePreviews && !previewCollapsed;
 
   async function handleApply(): Promise<void> {
     setApplying(true);
@@ -187,11 +203,35 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
         </div>
       </div>
 
-      {hasOutputs && runState?.outputs && (
-        <div data-testid="node-preview" className="border-t border-slate-100 px-2 py-1">
-          {Object.entries(runState.outputs).map(([key, value]) => (
-            <Preview key={key} value={value} />
-          ))}
+      {hasOutputs && showNodePreviews && (
+        <div className="border-t border-slate-100 px-2 py-0.5">
+          <button
+            type="button"
+            data-testid="node-preview-toggle"
+            title={previewCollapsed ? 'Hiện preview' : 'Ẩn preview'}
+            onClick={(e) => {
+              e.stopPropagation();
+              setPreviewCollapsed((v) => !v);
+            }}
+            className="text-[10px] text-slate-400 hover:text-slate-600"
+          >
+            {previewCollapsed ? '▸' : '▾'} preview
+          </button>
+          {showPreview && runState?.outputs && (
+            <div
+              data-testid="node-preview"
+              className="mt-0.5 flex max-h-[90px] cursor-pointer flex-col gap-1 overflow-hidden"
+              title="Xem kết quả đầy đủ"
+              onClick={(e) => {
+                e.stopPropagation();
+                requestScrollToNode(node.id);
+              }}
+            >
+              {Object.entries(runState.outputs).map(([key, value]) => (
+                <Preview key={key} value={value} />
+              ))}
+            </div>
+          )}
         </div>
       )}
 

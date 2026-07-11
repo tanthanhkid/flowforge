@@ -3,7 +3,23 @@
  * `text.template`, `output.collect`) — zero API cost, safe to run anytime.
  * Must pass 100% reliably, twice in a row.
  */
+import { mkdirSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
+
+// Matches playwright.config.ts's `FLOWFORGE_ARTIFACTS_DIR` for the free tier
+// (`path.join(tmpDir, 'artifacts')` where `tmpDir = e2e/.tmp`) — used by test
+// 11 (SPEC-step9.md §4) to drop a fixture image straight on disk so a
+// zero-cost `input.file` node can reference it (no fal.ai call needed to
+// exercise the ResultsPanel's media/download rendering).
+const artifactsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.tmp/artifacts');
+
+// A valid, minimal 1x1 transparent PNG — content doesn't matter, only that
+// `input.file` accepts it as a real file and the browser can point an <img>
+// at it.
+const TINY_PNG_BASE64 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 
 const PALETTE_TYPES = [
   'input.text',
@@ -310,5 +326,50 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
         expect(token.endsWith(suffix)).toBe(false);
       }
     }
+  });
+
+  test('11. Kết quả tab (SPEC-step9.md §2): auto-opens after a run, shows the final text + a working copy button + a media download link with ?download=1', async ({
+    page,
+  }) => {
+    const fixtureName = `${crypto.randomUUID()}.png`;
+    mkdirSync(artifactsDir, { recursive: true });
+    writeFileSync(path.join(artifactsDir, fixtureName), Buffer.from(TINY_PNG_BASE64, 'base64'));
+
+    await page.goto('/');
+    const wf: WorkflowLike = {
+      version: 1,
+      id: crypto.randomUUID(),
+      name: `e2e results tab ${Date.now()}`,
+      nodes: [
+        { id: 'input_1', type: 'input.text', params: { value: 'xin chào' }, position: { x: 40, y: 40 } },
+        {
+          id: 'text_template_1',
+          type: 'text.template',
+          params: { template: 'Lời chào: {{a}}' },
+          position: { x: 320, y: 40 },
+        },
+        { id: 'input_file_1', type: 'input.file', params: { path: fixtureName }, position: { x: 320, y: 220 } },
+        { id: 'output_collect_1', type: 'output.collect', params: {}, position: { x: 600, y: 100 } },
+      ],
+      edges: [
+        { id: 'e_1', from: { node: 'input_1', port: 'text' }, to: { node: 'text_template_1', port: 'a' } },
+        { id: 'e_2', from: { node: 'text_template_1', port: 'text' }, to: { node: 'output_collect_1', port: 'in1' } },
+        { id: 'e_3', from: { node: 'input_file_1', port: 'file' }, to: { node: 'output_collect_1', port: 'in2' } },
+      ],
+    };
+    await applyWorkflowViaJsonView(page, wf);
+    await page.getByTestId('save-btn').click();
+
+    const cards = page.getByTestId('node-card');
+    await runAndWaitForSuccess(page, cards, 'run-btn');
+
+    // Auto-switch (SPEC-step9.md §2): no click on the "Kết quả" tab itself.
+    const resultsPanel = page.getByTestId('results-panel');
+    await expect(resultsPanel).toBeVisible();
+    await expect(resultsPanel).toContainText('Lời chào: xin chào');
+    await expect(page.getByTestId('result-copy-btn').first()).toBeVisible();
+
+    const downloadLink = page.getByTestId('result-download-link').first();
+    await expect(downloadLink).toHaveAttribute('href', /\?download=1$/);
   });
 });

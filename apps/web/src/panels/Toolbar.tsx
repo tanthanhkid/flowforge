@@ -34,6 +34,8 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
   const validate = useFlowStore((s) => s.validate);
   const selectNode = useFlowStore((s) => s.selectNode);
   const clearForceNodes = useFlowStore((s) => s.clearForceNodes);
+  const showNodePreviews = useFlowStore((s) => s.showNodePreviews);
+  const toggleNodePreviews = useFlowStore((s) => s.toggleNodePreviews);
 
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -223,6 +225,19 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
         className="rounded border border-amber-400 bg-amber-50 px-3 py-1 text-xs font-medium text-amber-700 disabled:opacity-50"
       >
         Run ⚡ bỏ cache
+      </button>
+
+      <button
+        type="button"
+        data-testid="preview-toggle-btn"
+        onClick={toggleNodePreviews}
+        title="Bật/tắt preview trên tất cả node"
+        aria-pressed={showNodePreviews}
+        className={`rounded border px-3 py-1 text-xs ${
+          showNodePreviews ? 'border-blue-400 bg-blue-50 text-blue-700' : 'border-slate-300 text-slate-500'
+        }`}
+      >
+        👁 Preview
       </button>
 
       <div className="relative">

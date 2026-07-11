@@ -298,4 +298,73 @@ describe('openRun', () => {
       finishedAt: undefined,
     });
   });
+
+  // SPEC-step9.md §2 "auto-switch": opening any run (from RunsPanel's
+  // `openRun`, or a live run's own onDone refetch) switches the right panel
+  // to the "Kết quả" tab.
+  it('switches rightTab to "results" (SPEC-step9.md §2 auto-switch)', async () => {
+    useFlowStore.setState({ rightTab: 'params' });
+    const snapshot: RunSnapshot = {
+      run: { id: 'run3', workflowId: 'wf1', workflowJson: '{}', status: 'success', createdAt: 0, finishedAt: 1 },
+      nodes: [],
+    };
+    vi.mocked(api.getRun).mockResolvedValue(snapshot);
+
+    await useFlowStore.getState().openRun('run3');
+
+    expect(useFlowStore.getState().rightTab).toBe('results');
+  });
+});
+
+describe('showNodePreviews (SPEC-step9.md §1)', () => {
+  it('defaults to true and toggles off/on', () => {
+    expect(useFlowStore.getState().showNodePreviews).toBe(true);
+    useFlowStore.getState().toggleNodePreviews();
+    expect(useFlowStore.getState().showNodePreviews).toBe(false);
+    useFlowStore.getState().toggleNodePreviews();
+    expect(useFlowStore.getState().showNodePreviews).toBe(true);
+  });
+});
+
+describe('rightTab / scrollToNodeId (SPEC-step9.md §1/§2)', () => {
+  it('setRightTab sets the active tab', () => {
+    useFlowStore.getState().setRightTab('runs');
+    expect(useFlowStore.getState().rightTab).toBe('runs');
+    useFlowStore.getState().setRightTab('params');
+    expect(useFlowStore.getState().rightTab).toBe('params');
+  });
+
+  it('requestScrollToNode switches to "results" and records the node id; clearScrollToNode resets it', () => {
+    useFlowStore.getState().requestScrollToNode('n42');
+    expect(useFlowStore.getState().rightTab).toBe('results');
+    expect(useFlowStore.getState().scrollToNodeId).toBe('n42');
+
+    useFlowStore.getState().clearScrollToNode();
+    expect(useFlowStore.getState().scrollToNodeId).toBeNull();
+  });
+});
+
+describe('run() auto-switch on finish (SPEC-step9.md §2)', () => {
+  it('switches rightTab to "results" once the run finishes (onDone -> openRun)', async () => {
+    useFlowStore.setState({ dirty: false, rightTab: 'params' });
+    vi.mocked(api.createRun).mockResolvedValue({ runId: 'run4' });
+
+    let handlers: RunEventHandlers = {};
+    vi.mocked(api.openRunEvents).mockImplementation((_runId, h) => {
+      handlers = h;
+      return vi.fn();
+    });
+    vi.mocked(api.getRun).mockResolvedValue({
+      run: { id: 'run4', workflowId: 'wf1', workflowJson: '{}', status: 'success', createdAt: 0, finishedAt: 1 },
+      nodes: [],
+    });
+
+    await useFlowStore.getState().run();
+    expect(useFlowStore.getState().rightTab).toBe('params');
+
+    handlers.onDone?.();
+    await vi.waitFor(() => {
+      expect(useFlowStore.getState().rightTab).toBe('results');
+    });
+  });
 });

@@ -1,5 +1,10 @@
 /**
- * GET /artifacts/:filename (SPEC-step3.md §4).
+ * GET /artifacts/:filename (SPEC-step3.md §4), plus `?download=1`
+ * (SPEC-step9.md §3): adds `Content-Disposition: attachment` so a browser
+ * download (the ResultsPanel's ⬇ Tải về link) saves the file under its own
+ * name instead of navigating to it inline — default (no query) stays inline,
+ * unchanged from step 3, so existing <img>/<video>/<audio> previews keep
+ * rendering in place.
  *
  * Serves files straight out of artifactsDir with a hand-rolled handler
  * (deliberately not @fastify/static, per spec, so path-traversal handling is
@@ -48,6 +53,12 @@ export function registerArtifactsRoutes(app: FastifyInstance, artifactsDir: stri
     const ext = path.extname(rest).slice(1).toLowerCase();
     const contentType = CONTENT_TYPES[ext] ?? 'application/octet-stream';
     reply.header('Content-Type', contentType);
+
+    const query = request.query as { download?: string };
+    if (query.download === '1') {
+      reply.header('Content-Disposition', `attachment; filename="${rest}"`);
+    }
+
     reply.send(data);
   });
 }

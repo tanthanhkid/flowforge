@@ -1,5 +1,5 @@
 import { ReactFlow, ReactFlowProvider } from '@xyflow/react';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { NodeSpec, WorkflowNode } from '../src/api/types.ts';
 import { NodeCard } from '../src/canvas/NodeCard.tsx';
@@ -158,5 +158,75 @@ describe('NodeCard', () => {
     useFlowStore.setState({ forceNodeIds: [] });
     renderNode({ node: workflowNode, spec, runState: undefined });
     expect(screen.queryByText(/force/)).toBeNull();
+  });
+
+  // SPEC-step9.md §1 — compact preview + toggle.
+  describe('compact preview (SPEC-step9.md §1)', () => {
+    afterEach(() => {
+      useFlowStore.setState({ showNodePreviews: true });
+    });
+
+    it('caps an image preview to a small thumbnail (max-h-20) instead of the old max-h-32', () => {
+      const imageSpec: NodeSpec = { ...spec, outputs: { image: { type: 'image' } } };
+      renderNode({
+        node: { ...workflowNode, type: 'fal.image' },
+        spec: imageSpec,
+        runState: { state: 'success', logs: [], outputs: { image: { kind: 'image', path: 'foo.png' } } },
+      });
+      const img = document.querySelector('img');
+      expect(img?.className).toContain('max-h-20');
+    });
+
+    it('clamps a text preview to a single line (line-clamp-1)', () => {
+      const textSpec: NodeSpec = { ...spec, outputs: { text: { type: 'text' } } };
+      renderNode({
+        node: workflowNode,
+        spec: textSpec,
+        runState: { state: 'success', logs: [], outputs: { text: 'line one\nline two\nline three' } },
+      });
+      const p = screen.getByText(/line one/);
+      expect(p.className).toContain('line-clamp-1');
+    });
+
+    it('shows a per-node ▾/▸ toggle that hides node-preview when clicked, keeping the badge/testid absent while collapsed', () => {
+      const textSpec: NodeSpec = { ...spec, outputs: { text: { type: 'text' } } };
+      renderNode({
+        node: workflowNode,
+        spec: textSpec,
+        runState: { state: 'success', logs: [], outputs: { text: 'hello' } },
+      });
+      expect(screen.getByTestId('node-preview')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByTestId('node-preview-toggle'));
+      expect(screen.queryByTestId('node-preview')).toBeNull();
+
+      fireEvent.click(screen.getByTestId('node-preview-toggle'));
+      expect(screen.getByTestId('node-preview')).toBeInTheDocument();
+    });
+
+    it('hides all node previews (and the per-node toggle) when the global showNodePreviews store flag is off', () => {
+      useFlowStore.setState({ showNodePreviews: false });
+      const textSpec: NodeSpec = { ...spec, outputs: { text: { type: 'text' } } };
+      renderNode({
+        node: workflowNode,
+        spec: textSpec,
+        runState: { state: 'success', logs: [], outputs: { text: 'hello' } },
+      });
+      expect(screen.queryByTestId('node-preview')).toBeNull();
+      expect(screen.queryByTestId('node-preview-toggle')).toBeNull();
+    });
+
+    it('clicking the preview strip requests a scroll-to for this node (store scrollToNodeId + rightTab)', () => {
+      const textSpec: NodeSpec = { ...spec, outputs: { text: { type: 'text' } } };
+      renderNode({
+        node: workflowNode,
+        spec: textSpec,
+        runState: { state: 'success', logs: [], outputs: { text: 'hello' } },
+      });
+      fireEvent.click(screen.getByTestId('node-preview'));
+      expect(useFlowStore.getState().scrollToNodeId).toBe('n1');
+      expect(useFlowStore.getState().rightTab).toBe('results');
+      useFlowStore.setState({ scrollToNodeId: null, rightTab: 'params' });
+    });
   });
 });
