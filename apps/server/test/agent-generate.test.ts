@@ -126,9 +126,9 @@ describe('generateWorkflow', () => {
       expect(node.position).toBeDefined();
     }
     // node "a" (no incoming edges, depth 0) and node "b" (depth 1) per
-    // SPEC-step5.md §2's autoLayout formula (x = depth * 280).
+    // SPEC-step5.md §2 / SPEC-step16.md §3's autoLayout formula (x = depth * 380).
     expect(result.workflow.nodes.find((n) => n.id === 'a')?.position).toEqual({ x: 0, y: 0 });
-    expect(result.workflow.nodes.find((n) => n.id === 'b')?.position).toEqual({ x: 280, y: 0 });
+    expect(result.workflow.nodes.find((n) => n.id === 'b')?.position).toEqual({ x: 380, y: 0 });
   });
 
   it('injects id/version/name when the LLM response is missing them', async () => {

@@ -1,9 +1,18 @@
 /**
  * `autoLayout` (SPEC-step5.md §2, file list): fills in `position` for any
- * node that's missing one, placing it at `x = depth * 280, y = index * 150`
+ * node that's missing one, placing it at `x = depth * 380, y = index * 240`
  * where `depth` is the node's longest-path distance from a source node (a
  * node with no incoming edges) and `index` is its 0-based order among other
  * nodes sharing that depth (in original node-array order).
+ *
+ * SPEC-step16.md §3: bumped from the original 280/150 spacing — that assumed
+ * a node was roughly 280px wide, but NodeCard is a fixed 300px box (plus
+ * ports/preview can push its height past 150px), so the old spacing let
+ * freshly-generated nodes overlap before the client ever got a chance to
+ * fix them up (client `canvas/layout.ts`'s `layoutWorkflow`, run
+ * automatically after a successful ✨ generate, does the precise job with
+ * real measured sizes — this is just a coarser pre-validation nudge so
+ * positions aren't already on top of each other).
  *
  * Runs *before* `validateWorkflow()` in the generate/edit retry loop
  * (SPEC-step5.md §4), on a JSON value that hasn't been schema-validated yet
@@ -95,7 +104,7 @@ export function autoLayout(workflow: unknown): unknown {
     const index = indexByDepth.get(depth) ?? 0;
     indexByDepth.set(depth, index + 1);
 
-    return { ...node, position: { x: depth * 280, y: index * 150 } };
+    return { ...node, position: { x: depth * 380, y: index * 240 } };
   });
 
   return { ...workflow, nodes };

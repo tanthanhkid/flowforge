@@ -85,7 +85,9 @@ export function Preview({ value, compact = true }: PreviewProps) {
 
   if (typeof value === 'string') {
     return (
-      <p className={`whitespace-pre-wrap break-words text-xs ${compact ? 'line-clamp-1' : 'line-clamp-5'}`}>
+      <p
+        className={`whitespace-pre-wrap break-all text-xs ${compact ? 'line-clamp-1 overflow-hidden' : 'line-clamp-5'}`}
+      >
         {value}
       </p>
     );

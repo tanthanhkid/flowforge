@@ -41,6 +41,7 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
   const toggleNodePreviews = useFlowStore((s) => s.toggleNodePreviews);
   const costEstimate = useFlowStore((s) => s.costEstimate);
   const refreshEstimate = useFlowStore((s) => s.refreshEstimate);
+  const autoLayout = useFlowStore((s) => s.autoLayout);
 
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -88,6 +89,15 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
     try {
       const result = await generateWorkflowFromDescription(description);
       setWorkflowJson(result.workflow);
+      // SPEC-step16.md §3: run the client's precise auto-layout right after
+      // a successful ✨ generate — the agent's own positions (server
+      // `agent/layout.ts`) are only a coarse pre-validation nudge, not
+      // collision-free against NodeCard's actual fixed-size box, so left
+      // alone the generated graph re-creates the "nodes overlapping, edges
+      // chéo loạn" bug this step fixes. Runs immediately with whatever
+      // fallback sizes are available rather than waiting for nodes to
+      // render/measure first (spec: "không cần đợi đo").
+      autoLayout();
       setShowDescribe(false);
       setDescription('');
     } catch (err) {
@@ -286,6 +296,16 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
           </div>
         )}
       </div>
+
+      <button
+        type="button"
+        data-testid="auto-layout-btn"
+        onClick={autoLayout}
+        title="Tự động sắp xếp lại vị trí node (không chồng nhau)"
+        className="rounded border border-slate-300 px-3 py-1 text-xs"
+      >
+        🪄 Sắp xếp
+      </button>
 
       <button
         type="button"

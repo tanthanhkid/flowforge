@@ -14,6 +14,14 @@
  * global "👁 Preview" toolbar toggle (store `showNodePreviews`) which hides
  * every node's preview at once. Clicking the preview strip opens the
  * ResultsPanel (right-panel "Kết quả" tab) and scrolls to this node's entry.
+ *
+ * SPEC-step16.md §1: every node is a *fixed* `w-[300px]` box — no content
+ * (long title, long text preview, a wide param value) may widen it past
+ * that, otherwise a long LLM text preview stretches the node to 1000+px and
+ * overlaps neighbors / sends edges everywhere. Title truncates with a
+ * tooltip; the text preview keeps its 1-line clamp plus `break-all` so a
+ * single unbroken token (a URL, a base64 blob) can't push the box wider
+ * either; media previews stay `max-w-full` so they scale down to fit.
  */
 import { Handle, Position, type NodeProps } from '@xyflow/react';
 import { useState, type CSSProperties } from 'react';
@@ -106,7 +114,7 @@ export function NodeCard({ data, selected }: NodeProps<FlowNode>) {
       data-testid="node-card"
       data-node-id={node.id}
       data-state={runState?.state ?? 'pending'}
-      className={`min-w-[200px] rounded-md border bg-white shadow-sm ${
+      className={`w-[300px] overflow-hidden rounded-md border bg-white shadow-sm ${
         selected ? 'border-blue-500 ring-2 ring-blue-400' : 'border-slate-300'
       }`}
     >

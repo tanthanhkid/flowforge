@@ -90,6 +90,16 @@ describe('NodeCard', () => {
     expect(screen.getByText('llm')).toBeInTheDocument();
   });
 
+  // SPEC-step16.md §1: a fixed 300px node box, not a `min-w` that stretches
+  // to fit long content (that's the bug this step fixes — a long LLM text
+  // preview used to stretch the node to 1000+px and overlap its neighbors).
+  it('has a fixed 300px width (not a min-width that grows with content)', () => {
+    renderNode({ node: workflowNode, spec, runState: undefined });
+    const card = screen.getByTestId('node-card');
+    expect(card.className).toContain('w-[300px]');
+    expect(card.className).not.toMatch(/min-w-/);
+  });
+
   it('shows a pending badge by default and a running badge once state updates', () => {
     const { rerender } = renderNode({ node: workflowNode, spec, runState: { state: 'pending', logs: [] } });
     expect(screen.getByText('pending')).toBeInTheDocument();

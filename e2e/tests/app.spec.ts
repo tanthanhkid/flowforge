@@ -429,4 +429,59 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await expect(resultsPanel).toContainText('Xin chào từ upload e2e');
     await expect(resultsPanel).toContainText('Đây là nội dung tải lên qua browser.');
   });
+
+  // SPEC-step16.md §4: reproduces the user's "nodes overlapping after
+  // ✨ generate" bug directly (all positions pinned to the same point) and
+  // asserts the 🪄 Sắp xếp button actually separates them.
+  test('13. Auto-layout: nodes applied on top of each other are separated after clicking 🪄 Sắp xếp', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    const wf: WorkflowLike = {
+      version: 1,
+      id: crypto.randomUUID(),
+      name: `e2e auto-layout ${Date.now()}`,
+      nodes: [
+        { id: 'input_1', type: 'input.text', params: { value: 'a' }, position: { x: 400, y: 400 } },
+        {
+          id: 'text_template_1',
+          type: 'text.template',
+          params: { template: '{{a}}' },
+          position: { x: 400, y: 400 },
+        },
+        { id: 'output_collect_1', type: 'output.collect', params: {}, position: { x: 400, y: 400 } },
+      ],
+      edges: [
+        { id: 'e_1', from: { node: 'input_1', port: 'text' }, to: { node: 'text_template_1', port: 'a' } },
+        { id: 'e_2', from: { node: 'text_template_1', port: 'text' }, to: { node: 'output_collect_1', port: 'in1' } },
+      ],
+    };
+    await applyWorkflowViaJsonView(page, wf);
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+
+    await page.getByTestId('auto-layout-btn').click();
+
+    // Read positions back via the JSON view (server/store truth), same
+    // approach `applyWorkflowViaJsonView` already relies on for round-trips.
+    await page.getByTestId('json-view-btn').click();
+    const textarea = page.getByTestId('json-view-textarea');
+    const jsonText = await textarea.inputValue();
+    await page.mouse.click(5, 5);
+
+    const laidOut = JSON.parse(jsonText) as WorkflowLike;
+    const positions = laidOut.nodes.map((n) => n.position);
+    for (const p of positions) {
+      expect(p).toBeDefined();
+    }
+    // All three previously sat on the exact same point (400,400) — no two
+    // should still coincide after auto-layout.
+    for (let i = 0; i < positions.length; i++) {
+      for (let j = i + 1; j < positions.length; j++) {
+        expect(positions[i]).not.toEqual(positions[j]);
+      }
+    }
+
+    // The graph is also visually still intact (no node lost/duplicated).
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+  });
 });

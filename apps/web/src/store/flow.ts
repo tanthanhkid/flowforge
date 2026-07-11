@@ -20,6 +20,7 @@ import type {
   WorkflowEdgeEndpoint,
   WorkflowNode,
 } from '../api/types.ts';
+import { layoutWorkflow, type NodeSize } from '../canvas/layout.ts';
 import { compatible } from '../canvas/portColors.ts';
 
 export interface NodeRunUiState {
@@ -84,6 +85,15 @@ export interface FlowState {
    * doesn't debounce so tests/other callers can call it directly.
    */
   costEstimate: CostEstimate | null;
+  /**
+   * SPEC-step16.md §2/§3 — each node's *measured* on-screen box size, kept
+   * up to date by FlowCanvas from React Flow's own `dimensions` NodeChange
+   * events (the store doesn't own a React Flow instance itself, so this is
+   * how `autoLayout()` gets real sizes rather than only ever using
+   * `layoutWorkflow`'s fallback). Missing entries (a node that hasn't
+   * rendered/measured yet) just fall back inside `layoutWorkflow`.
+   */
+  nodeSizes: Record<string, NodeSize>;
 
   loadRegistry(): Promise<void>;
   /** See `modelCatalog` above. */
@@ -123,6 +133,17 @@ export interface FlowState {
   /** See `scrollToNodeId` above. */
   requestScrollToNode(id: string): void;
   clearScrollToNode(): void;
+  /** See `nodeSizes` above. */
+  setNodeSizes(sizes: Record<string, NodeSize>): void;
+  /**
+   * SPEC-step16.md §3 — recomputes every node's position via
+   * `layoutWorkflow` using the current `nodeSizes` (falling back to
+   * NodeCard's fixed box size for anything not yet measured), keeps the
+   * current selection, and marks the workflow dirty (positions changed).
+   * Backs both the Toolbar "🪄 Sắp xếp" button and the auto-run-once after a
+   * successful ✨ generate.
+   */
+  autoLayout(): void;
 }
 
 function emptyWorkflow(): Workflow {
@@ -209,6 +230,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   showNodePreviews: true,
   rightTab: 'params',
   scrollToNodeId: null,
+  nodeSizes: {},
 
   async loadRegistry() {
     const nodes = await api.getRegistry();
@@ -517,5 +539,16 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
 
   clearScrollToNode() {
     set({ scrollToNodeId: null });
+  },
+
+  setNodeSizes(sizes) {
+    set({ nodeSizes: sizes });
+  },
+
+  autoLayout() {
+    set((state) => ({
+      workflow: layoutWorkflow(state.workflow, state.nodeSizes),
+      dirty: true,
+    }));
   },
 }));

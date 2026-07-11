@@ -125,3 +125,35 @@ describe('Toolbar — 💰 cost estimate', () => {
     expect(screen.getByText(/Ước tính tham khảo theo catalog/)).toBeInTheDocument();
   });
 });
+
+// SPEC-step16.md §3: "🪄 Sắp xếp" button calls the store's autoLayout(),
+// which recomputes every node's position via layoutWorkflow.
+describe('Toolbar — 🪄 Sắp xếp (SPEC-step16.md §3)', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true, issues: [] }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    resetStore({
+      version: 1,
+      id: 'wf-layout',
+      name: 'Layout test',
+      nodes: [
+        { id: 'a', type: 'input.text', params: { value: 'hi' }, position: { x: 500, y: 500 } },
+        { id: 'b', type: 'input.text', params: { value: 'hi2' }, position: { x: 500, y: 500 } },
+      ],
+      edges: [],
+    });
+  });
+
+  it('clicking "🪄 Sắp xếp" recomputes node positions via autoLayout()', () => {
+    render(<Toolbar onOpenWorkflowList={noop} onOpenJsonView={noop} onOpenSettings={noop} />);
+
+    fireEvent.click(screen.getByTestId('auto-layout-btn'));
+
+    const nodes = useFlowStore.getState().workflow.nodes;
+    // Both nodes previously sat on the exact same point (500,500) — a
+    // real auto-layout must separate them (same column, different rows).
+    expect(nodes.find((n) => n.id === 'a')?.position).not.toEqual(nodes.find((n) => n.id === 'b')?.position);
+    expect(useFlowStore.getState().dirty).toBe(true);
+  });
+});

@@ -87,8 +87,29 @@ function FlowCanvasInner() {
     [workflow.edges, workflow.nodes, specByType, selectedEdgeIds],
   );
 
+  const setNodeSizes = useFlowStore((s) => s.setNodeSizes);
+
   const onNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
+      // SPEC-step16.md §2/§3: React Flow reports each node's real rendered
+      // box size via `dimensions` changes as it measures/re-measures nodes
+      // (on mount, and whenever content like a preview toggles change a
+      // node's height) — mirror the latest size for every changed node into
+      // the store so `autoLayout()` can lay out using real sizes instead of
+      // always falling back to NodeCard's nominal 300x200.
+      const dimensionChanges = changes.filter(
+        (c): c is Extract<NodeChange<FlowNode>, { type: 'dimensions' }> =>
+          c.type === 'dimensions' && c.dimensions !== undefined,
+      );
+      if (dimensionChanges.length > 0) {
+        const current = useFlowStore.getState().nodeSizes;
+        const next = { ...current };
+        for (const change of dimensionChanges) {
+          next[change.id] = { width: change.dimensions!.width, height: change.dimensions!.height };
+        }
+        setNodeSizes(next);
+      }
+
       for (const change of changes) {
         if (change.type === 'position' && change.position) {
           updateNodePosition(change.id, change.position);
@@ -108,7 +129,7 @@ function FlowCanvasInner() {
         }
       }
     },
-    [updateNodePosition, removeNode, selectNode, selectedNodeId],
+    [updateNodePosition, removeNode, selectNode, selectedNodeId, setNodeSizes],
   );
 
   const onEdgesChange = useCallback(
