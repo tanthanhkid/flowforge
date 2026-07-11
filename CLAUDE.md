@@ -34,9 +34,10 @@
 - **LLM (OpenRouter)**: `llm.generate` (model, system prompt, temperature; in: `prompt:text` + optional `context:text`; out: `text`), `llm.transform` (biến đổi text theo instruction)
 - **fal.ai**: `fal.image` (model id tự do vd `fal-ai/flux/dev`, size, seed; in: `prompt:text` + optional `image`; out: `image`), `fal.video` (model id tự do, duration, aspect ratio; in: `prompt:text` + optional `image`; out: `video`). Queue API: `https://queue.fal.run/{model_id}` submit → poll → fetch → download về `./data/artifacts/`
 - **Vbee TTS**: `vbee.tts` (voice_code, speed, format; in: `text:text`; out: `audio`). Async: POST → poll → download. **Chi tiết API lấy từ skill `vbee-tts` có sẵn trong session — dùng skill này thay vì đoán endpoint.**
-- **Utility**: `input.text`, `input.file`, `text.template` (ghép text theo `{{slot}}`), `output.collect`
+- **ffmpeg local**: `video.compose` (ghép ≤3 video + audio, loop theo audio, mp4 1080×1920 mặc định — free, spawn ffmpeg)
+- **Utility**: `input.text`, `input.file`, `input.image`, `input.pdf` (unpdf), `input.markdown`, `text.template` (ghép text theo `{{slot}}`), `output.collect`
 
-Lưu ý chủ đích: model id của fal.ai là string tự do (không hardcode dropdown) vì model trending đổi liên tục.
+Lưu ý chủ đích: model id của fal.ai/OpenRouter là string tự do (dropdown catalog chỉ là gợi ý — `apps/server/src/catalog/`, 48 preset phân hạng xin/kha/re kèm `estUsd` cho cost estimate; luôn giữ option "Tự nhập"). Node fal.video có guard: ảnh nối vào + model t2v trong catalog → chặn trước khi submit.
 
 ## AI Agent layer (điểm khác biệt chính)
 
@@ -51,10 +52,12 @@ Canvas React Flow (drag từ sidebar theo category, params panel bên phải), e
 ## Cấu trúc
 
 ```
-apps/server/src/{engine,nodes,agent,routes,db}
-apps/web/src/{canvas,panels,store}
-data/artifacts/
-docs/            # spec từng bước (orchestrator viết)
+apps/server/src/{engine,nodes,agent,catalog,routes,db}
+apps/web/src/{canvas,panels,preview,store,api}
+e2e/             # Playwright: free tier (mặc định, 0 đồng) + real tier (E2E_REAL=1)
+samples/         # 11 workflow mẫu + assets (seed: pnpm --filter server seed)
+data/artifacts/  # media outputs + uploads/ (gitignored)
+docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
 ```
 
 ## Thứ tự thực hiện & checkpoint
@@ -66,7 +69,21 @@ docs/            # spec từng bước (orchestrator viết)
 5. ✅ Agent layer (generate + edit-node) — spec: `docs/SPEC-step5.md`
 6. ✅ Polish: JSON view, cache indicator, settings page — spec: `docs/SPEC-step6.md`
 
-**MVP HOÀN TẤT 2026-07-10** — 177 server + 68 web tests. Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên.
+**MVP HOÀN TẤT 2026-07-10.** Các bước bổ sung đã ship (2026-07-11, mỗi bước có spec riêng trong docs/):
+
+7. ✅ Playwright E2E — free tier (13 test, 0 đồng) + real tier gated `E2E_REAL=1`
+8. ✅ 5 sample workflows content Facebook + seed script
+9. ✅ Results UX — canvas gọn, tab Kết quả (download/copy), preview toggle
+10. ✅ Upload từ browser + node `input.image`/`input.pdf`/`input.markdown`
+11. ✅ 4 samples dùng node input mới + stock assets kèm repo
+12. ✅ Node `video.compose` (ffmpeg) — video + voiceover → mp4 hoàn chỉnh
+13. ✅ Model catalog fal phân hạng 💎/✅/💸 + UI picker (giữ tự nhập)
+14. ✅ Mở rộng catalog: 24 video + 12 ảnh + 12 LLM OpenRouter (giá thật từ API)
+15. ✅ Cost estimate (`POST /api/estimate` + badge 💰 toolbar) + samples premium/value
+16. ✅ Fix layout: node cố định 300px + nút 🪄 auto-layout theo kích thước thật
+17. ✅ Guard fal.video: ảnh + model text-to-video → chặn trước khi tốn tiền
+
+Hiện trạng: **13 node types, 48 model presets, 11 samples, 263 server + 115 web + 13 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 
@@ -83,7 +100,12 @@ Settings page (bước 6) ghi đè/ cập nhật các giá trị này server-sid
 ## Lệnh thường dùng
 
 ```bash
-pnpm install            # root
-pnpm -r test            # chạy toàn bộ unit test (vitest)
-pnpm --filter server test
+pnpm install                 # root
+pnpm -r test                 # toàn bộ unit test (vitest)
+pnpm --filter server test    # / typecheck / dev / seed / smoke
+pnpm --filter web test       # / typecheck / build / dev
+pnpm run e2e                 # Playwright free tier (0 đồng) — chạy từ ROOT
+pnpm run e2e:real            # tier tốn phí (~$0.01-0.05) — chỉ orchestrator chạy khi nghiệm thu
 ```
+
+Quy trình nghiệm thu chuẩn mỗi bước: unit suites + e2e free xanh → (nếu liên quan) smoke thật tối thiểu → commit main + push (check `.env.local`/`*.db`/artifacts không bị commit) → noti ntfy.sh/loi-thanhtt4 → restart dev server :3001 nếu server code đổi.
