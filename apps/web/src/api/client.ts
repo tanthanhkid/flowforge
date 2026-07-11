@@ -6,6 +6,7 @@
  * reverse proxy that does the same forwarding.
  */
 import type {
+  CostEstimate,
   CreateRunBody,
   EditNodeResult,
   GenerateWorkflowResult,
@@ -139,6 +140,12 @@ export function editNodeWithInstruction(
     method: 'POST',
     body: JSON.stringify({ workflow, nodeId, instruction, model }),
   });
+}
+
+// ---- estimate (POST /api/estimate, SPEC-step15.md §2) --------------------
+
+export function estimateWorkflowCost(workflow: Workflow): Promise<CostEstimate> {
+  return request('/api/estimate', { method: 'POST', body: JSON.stringify(workflow) });
 }
 
 // ---- settings (SPEC-step6.md §1) ----------------------------------------

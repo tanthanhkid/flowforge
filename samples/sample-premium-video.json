@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "id": "sample-premium-video",
+  "name": "💎 Video quảng cáo cao cấp (max quality)",
+  "nodes": [
+    {
+      "id": "topic",
+      "type": "input.text",
+      "params": { "value": "nước hoa Việt cao cấp Miss Sài Gòn" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "script",
+      "type": "llm.generate",
+      "params": {
+        "model": "anthropic/claude-sonnet-4.5",
+        "system": "Bạn là copywriter cao cấp cho các thương hiệu nước hoa xa xỉ Việt Nam. Nhiệm vụ: từ tên sản phẩm được cho, viết 1 script thuyết minh video quảng cáo dài 60-80 từ, giọng văn sang trọng, gợi cảm, tinh tế, có mở đầu cuốn hút và kết thúc mời gọi trải nghiệm. Chỉ trả về script, không giải thích thêm.",
+        "temperature": 0.8
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "voice",
+      "type": "vbee.tts",
+      "params": {
+        "voiceCode": "sg_female_thaotrinh_full_48k-fhg",
+        "speed": 0.95,
+        "format": "mp3"
+      },
+      "position": { "x": 600, "y": -120 }
+    },
+    {
+      "id": "vid_prompt",
+      "type": "llm.transform",
+      "params": {
+        "instruction": "Từ script quảng cáo nước hoa cao cấp này, viết 1 video prompt bằng tiếng Anh (tối đa 50 từ) mô tả cảnh cinematic luxury: ánh sáng vàng ấm, chuyển động camera chậm rãi và sang trọng, chai nước hoa lấp lánh, không khí xa xỉ. Chỉ trả về prompt, không giải thích.",
+        "model": "anthropic/claude-sonnet-4.5",
+        "temperature": 0.4
+      },
+      "position": { "x": 600, "y": 120 }
+    },
+    {
+      "id": "video",
+      "type": "fal.video",
+      "params": {
+        "modelId": "fal-ai/veo3",
+        "duration": 8,
+        "aspectRatio": "9:16"
+      },
+      "position": { "x": 900, "y": 120 }
+    },
+    {
+      "id": "final",
+      "type": "video.compose",
+      "params": {
+        "width": 1080,
+        "height": 1920,
+        "fit": "cover",
+        "loopVideo": true,
+        "fps": 30
+      },
+      "position": { "x": 1200, "y": 0 }
+    },
+    {
+      "id": "caption",
+      "type": "llm.generate",
+      "params": {
+        "model": "anthropic/claude-sonnet-4.5",
+        "system": "Bạn là chuyên viên content Facebook cho thương hiệu xa xỉ. Từ script được cho, viết 1 caption Facebook sang trọng, ngắn gọn (2-3 câu), kèm 3-5 hashtag phù hợp. Chỉ trả về caption, không giải thích thêm.",
+        "temperature": 0.8
+      },
+      "position": { "x": 900, "y": -260 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 1500, "y": -80 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "topic", "port": "text" }, "to": { "node": "script", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "script", "port": "text" }, "to": { "node": "voice", "port": "text" } },
+    { "id": "e3", "from": { "node": "script", "port": "text" }, "to": { "node": "vid_prompt", "port": "text" } },
+    { "id": "e4", "from": { "node": "vid_prompt", "port": "text" }, "to": { "node": "video", "port": "prompt" } },
+    { "id": "e5", "from": { "node": "video", "port": "video" }, "to": { "node": "final", "port": "video" } },
+    { "id": "e6", "from": { "node": "voice", "port": "audio" }, "to": { "node": "final", "port": "audio" } },
+    { "id": "e7", "from": { "node": "script", "port": "text" }, "to": { "node": "caption", "port": "prompt" } },
+    { "id": "e8", "from": { "node": "script", "port": "text" }, "to": { "node": "result", "port": "in1" } },
+    { "id": "e9", "from": { "node": "caption", "port": "text" }, "to": { "node": "result", "port": "in2" } },
+    { "id": "e10", "from": { "node": "final", "port": "video" }, "to": { "node": "result", "port": "in3" } }
+  ]
+}

@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import * as api from '../api/client.ts';
 import { ApiError } from '../api/client.ts';
 import type {
+  CostEstimate,
   ModelCatalog,
   NodeRunRecord,
   NodeSpec,
@@ -75,6 +76,14 @@ export interface FlowState {
    * by the caller — this list only feeds Toolbar's own call site.
    */
   forceNodeIds: string[];
+  /**
+   * SPEC-step15.md §3 — 💰 cost estimate shown next to Run. `null` until the
+   * first `refreshEstimate()` resolves (or after a failed fetch, which
+   * fails silently — the badge just doesn't render). Toolbar debounces the
+   * calls to this (800ms after the workflow last changed); the store itself
+   * doesn't debounce so tests/other callers can call it directly.
+   */
+  costEstimate: CostEstimate | null;
 
   loadRegistry(): Promise<void>;
   /** See `modelCatalog` above. */
@@ -102,6 +111,8 @@ export interface FlowState {
   openRun(runId: string): Promise<void>;
   /** Not from spec §3's action list verbatim — backs the Toolbar's Validate button (spec §4). */
   validate(): Promise<boolean>;
+  /** See `costEstimate` above. Silent-fails (leaves the previous estimate in place) on any error. */
+  refreshEstimate(): Promise<void>;
   /** See `forceNodeIds` above. */
   toggleForceNode(id: string): void;
   clearForceNodes(): void;
@@ -194,6 +205,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   dirty: false,
   validationIssues: [],
   forceNodeIds: [],
+  costEstimate: null,
   showNodePreviews: true,
   rightTab: 'params',
   scrollToNodeId: null,
@@ -467,6 +479,16 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     const res = await api.validateWorkflow(get().workflow);
     set({ validationIssues: res.issues });
     return res.ok;
+  },
+
+  async refreshEstimate() {
+    try {
+      const estimate = await api.estimateWorkflowCost(get().workflow);
+      set({ costEstimate: estimate });
+    } catch {
+      // Silent fail (spec §3): a transient network error shouldn't clobber
+      // the toolbar with an error banner — the 💰 badge just doesn't update.
+    }
   },
 
   toggleForceNode(id) {

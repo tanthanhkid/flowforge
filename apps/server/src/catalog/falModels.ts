@@ -11,6 +11,14 @@
  * verification log. `cost` is a rough, user-facing reference string, not
  * billing-accurate: pulled from the model's page where pricing was legible,
  * otherwise a "~" estimate.
+ *
+ * `estUsd`/`estBasis` (SPEC-step15.md §1) are the machine-readable twin of
+ * `cost`, used by `engine/costEstimate.ts`: `estUsd` is always normalized to
+ * a *5-second clip* for video (fal.video's `duration` param then scales this
+ * linearly — 10s = 2x) and to *1 image* for image models, derived straight
+ * from the same source pricing as `cost` above (midpoint when `cost` gives a
+ * range). `estBasis` is a short Vietnamese note on how that number was
+ * derived, for the estimate breakdown popover.
  */
 
 export interface FalModelPreset {
@@ -25,6 +33,10 @@ export interface FalModelPreset {
   /** One-line Vietnamese note: strengths/weaknesses. */
   note?: string;
   kind: 'video-t2v' | 'video-i2v' | 'image';
+  /** Machine-readable estimate (SPEC-step15.md §1) — see file header. */
+  estUsd: number;
+  /** How `estUsd` was derived, e.g. "per 5s clip (quy đổi từ $3.2/8s)". */
+  estBasis: string;
 }
 
 export const FAL_VIDEO_MODELS: FalModelPreset[] = [
@@ -36,6 +48,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$3.2/8s (có âm thanh) — đắt nhất, đẹp nhất',
     note: 'Chất lượng điện ảnh, có âm thanh đồng bộ, chuyển động tự nhiên nhất hiện có',
     kind: 'video-t2v',
+    estUsd: 2.0,
+    estBasis: 'per 5s clip (quy đổi tuyến tính từ $3.2/8s gốc)',
   },
   {
     id: 'fal-ai/veo3/fast',
@@ -44,6 +58,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$1.2/8s — rẻ hơn Veo 3 gốc nhưng vẫn rất đẹp',
     note: 'Bản nhanh/rẻ hơn của Veo 3, đánh đổi chút chi tiết để giảm giá',
     kind: 'video-t2v',
+    estUsd: 0.75,
+    estBasis: 'per 5s clip (quy đổi tuyến tính từ $1.2/8s gốc)',
   },
   {
     id: 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video',
@@ -52,6 +68,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.35/5s',
     note: 'Chuyển động mượt, bám prompt tốt, một trong những model video xịn nhất fal.ai',
     kind: 'video-t2v',
+    estUsd: 0.35,
+    estBasis: 'per 5s clip',
   },
   {
     id: 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video',
@@ -60,6 +78,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.35/5s',
     note: 'Bản image-to-video cùng dòng Kling 2.5 Turbo Pro — dùng khi có ảnh đầu vào',
     kind: 'video-i2v',
+    estUsd: 0.35,
+    estBasis: 'per 5s clip',
   },
   {
     id: 'fal-ai/minimax/hailuo-02/pro/text-to-video',
@@ -68,6 +88,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.045/s',
     note: 'Chất lượng cao, giá hợp lý hơn Veo3/Kling pro, giỏi chuyển động phức tạp',
     kind: 'video-t2v',
+    estUsd: 0.225,
+    estBasis: 'per 5s clip (quy đổi từ $0.045/s)',
   },
 
   {
@@ -77,6 +99,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '$1.40/5s',
     note: 'Bản Master mới nhất dòng Kling, chi tiết và bám prompt tốt hơn 2.5 Turbo Pro nhưng đắt hơn',
     kind: 'video-t2v',
+    estUsd: 1.4,
+    estBasis: 'per 5s clip',
   },
   {
     id: 'fal-ai/kling-video/v2.1/master/image-to-video',
@@ -85,6 +109,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '$1.40/5s + $0.28/s thêm',
     note: 'Bản image-to-video cùng dòng Kling 2.1 Master',
     kind: 'video-i2v',
+    estUsd: 1.4,
+    estBasis: 'per 5s clip (chưa tính $0.28/s phụ trội nếu kéo dài hơn 5s)',
   },
   {
     id: 'fal-ai/bytedance/seedance/v1/pro/text-to-video',
@@ -93,6 +119,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.62/5s (1080p)',
     note: 'Model của ByteDance, chuyển động mượt và ổn định, cạnh tranh trực tiếp với Kling/Veo',
     kind: 'video-t2v',
+    estUsd: 0.62,
+    estBasis: 'per 5s clip (1080p)',
   },
   {
     id: 'fal-ai/bytedance/seedance/v1/pro/image-to-video',
@@ -101,6 +129,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.74/5s (1080p)',
     note: 'Bản image-to-video cùng dòng Seedance 1.0 Pro',
     kind: 'video-i2v',
+    estUsd: 0.74,
+    estBasis: 'per 5s clip (1080p)',
   },
   {
     id: 'fal-ai/sora-2/text-to-video',
@@ -109,6 +139,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '$0.1/s',
     note: 'Model của OpenAI trên fal, chất lượng điện ảnh, hiểu vật lý/chuyển động phức tạp tốt',
     kind: 'video-t2v',
+    estUsd: 0.5,
+    estBasis: 'per 5s clip (quy đổi từ $0.1/s)',
   },
 
   // ✅ khá
@@ -119,6 +151,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.10-0.20/5s (ước lượng)',
     note: 'Đời cũ hơn Kling 2.5, vẫn ổn cho việc dùng hàng ngày, rẻ hơn bản pro',
     kind: 'video-t2v',
+    estUsd: 0.15,
+    estBasis: 'per 5s clip (trung bình khoảng $0.10-0.20)',
   },
   {
     id: 'fal-ai/kling-video/v1.6/standard/image-to-video',
@@ -127,6 +161,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.10-0.20/5s (ước lượng)',
     note: 'Bản image-to-video cùng dòng Kling 1.6 Standard',
     kind: 'video-i2v',
+    estUsd: 0.15,
+    estBasis: 'per 5s clip (trung bình khoảng $0.10-0.20)',
   },
   {
     id: 'fal-ai/luma-dream-machine/ray-2',
@@ -135,6 +171,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.50/5s',
     note: 'Chất lượng khá, chuyển động camera đẹp, giá tầm trung',
     kind: 'video-t2v',
+    estUsd: 0.5,
+    estBasis: 'per 5s clip',
   },
   {
     id: 'fal-ai/pika/v2.2/text-to-video',
@@ -143,6 +181,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '$0.20/5s (720p) — $0.45/5s (1080p)',
     note: 'Hiệu ứng chuyển cảnh/Pikaffects đặc trưng, giá theo độ phân giải',
     kind: 'video-t2v',
+    estUsd: 0.2,
+    estBasis: 'per 5s clip (720p, mức thấp trong khoảng $0.20-0.45)',
   },
   {
     id: 'fal-ai/minimax/hailuo-02/standard/text-to-video',
@@ -151,6 +191,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '$0.045/s',
     note: 'Bản Standard rẻ hơn Pro cùng dòng Hailuo, vẫn giỏi chuyển động phức tạp',
     kind: 'video-t2v',
+    estUsd: 0.225,
+    estBasis: 'per 5s clip (quy đổi từ $0.045/s)',
   },
   {
     id: 'fal-ai/minimax/hailuo-02/standard/image-to-video',
@@ -159,6 +201,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '$0.045/s',
     note: 'Bản image-to-video cùng dòng Hailuo-02 Standard',
     kind: 'video-i2v',
+    estUsd: 0.225,
+    estBasis: 'per 5s clip (quy đổi từ $0.045/s)',
   },
   {
     id: 'fal-ai/wan/v2.2-a14b/text-to-video',
@@ -167,6 +211,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.04-0.08/s theo độ phân giải',
     note: 'Model mã nguồn mở của Alibaba, họ Wan 2.x, chất lượng khá và rẻ hơn các model đóng',
     kind: 'video-t2v',
+    estUsd: 0.3,
+    estBasis: 'per 5s clip (trung bình $0.06/s x 5s)',
   },
   {
     id: 'fal-ai/pixverse/v4.5/text-to-video',
@@ -175,6 +221,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.15-0.4/5s theo độ phân giải',
     note: 'Chuyển động khá mượt, nhiều hiệu ứng camera, giá theo độ phân giải',
     kind: 'video-t2v',
+    estUsd: 0.275,
+    estBasis: 'per 5s clip (trung bình khoảng $0.15-0.4)',
   },
   {
     id: 'fal-ai/pixverse/v4.5/image-to-video',
@@ -183,6 +231,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.15-0.4/5s theo độ phân giải',
     note: 'Bản image-to-video cùng dòng PixVerse V4.5',
     kind: 'video-i2v',
+    estUsd: 0.275,
+    estBasis: 'per 5s clip (trung bình khoảng $0.15-0.4)',
   },
   {
     id: 'fal-ai/hunyuan-video',
@@ -191,6 +241,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.40/video',
     note: 'Model mã nguồn mở của Tencent, chất lượng khá cho một model mở',
     kind: 'video-t2v',
+    estUsd: 0.4,
+    estBasis: 'per 5s clip (video mẫu ~5s)',
   },
   {
     id: 'fal-ai/vidu/q1/text-to-video',
@@ -199,6 +251,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.40/5s',
     note: 'Chất lượng khá, giỏi giữ nhân vật nhất quán giữa các cảnh',
     kind: 'video-t2v',
+    estUsd: 0.4,
+    estBasis: 'per 5s clip',
   },
 
   // 💸 rẻ
@@ -209,6 +263,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.02-0.05/s (ước lượng)',
     note: 'Rẻ nhất, chất lượng thấp, hay ra ngang — chỉ để test',
     kind: 'video-t2v',
+    estUsd: 0.175,
+    estBasis: 'per 5s clip (trung bình $0.035/s x 5s)',
   },
   {
     id: 'fal-ai/mochi-v1',
@@ -217,6 +273,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '~$0.10-0.20/video (ước lượng)',
     note: 'Model mã nguồn mở, chuyển động ổn ở mức cơ bản, phù hợp test nhanh',
     kind: 'video-t2v',
+    estUsd: 0.15,
+    estBasis: 'per 5s clip (trung bình khoảng $0.10-0.20/video)',
   },
   {
     id: 'fal-ai/wan-t2v',
@@ -225,6 +283,8 @@ export const FAL_VIDEO_MODELS: FalModelPreset[] = [
     cost: '$0.2/video (720p)',
     note: 'Đời cũ hơn Wan 2.2, rẻ, chất lượng vừa phải cho việc nháp/test ý tưởng',
     kind: 'video-t2v',
+    estUsd: 0.2,
+    estBasis: 'per 5s clip (720p, video mẫu ~5s)',
   },
 ];
 
@@ -237,6 +297,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.05/ảnh',
     note: 'Độ chi tiết cao nhất dòng FLUX, ảnh chân thực, giá cao nhất nhóm image',
     kind: 'image',
+    estUsd: 0.05,
+    estBasis: 'per image',
   },
   {
     id: 'fal-ai/recraft/v3/text-to-image',
@@ -245,6 +307,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.04-0.08/ảnh',
     note: 'Giỏi chữ trong ảnh, tốt cho poster/logo/thiết kế có text',
     kind: 'image',
+    estUsd: 0.06,
+    estBasis: 'per image (trung bình khoảng $0.04-0.08)',
   },
   {
     id: 'fal-ai/imagen4/preview',
@@ -253,6 +317,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '$0.04-0.06/ảnh theo bản (fast/standard/ultra)',
     note: 'Model của Google, ảnh chân thực và chi tiết cao, đặc biệt tốt cho ảnh người',
     kind: 'image',
+    estUsd: 0.05,
+    estBasis: 'per image (trung bình khoảng $0.04-0.06)',
   },
   {
     id: 'fal-ai/bytedance/seedream/v4/text-to-image',
@@ -261,6 +327,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.03-0.05/ảnh (ước lượng)',
     note: 'Model của ByteDance, bản mới nhất dòng Seedream, chi tiết cao và màu sắc đẹp',
     kind: 'image',
+    estUsd: 0.04,
+    estBasis: 'per image (trung bình khoảng $0.03-0.05)',
   },
   {
     id: 'fal-ai/ideogram/v3',
@@ -269,6 +337,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '$0.03/ảnh (Turbo) — $0.06 (Balanced) — $0.09 (Quality)',
     note: 'Giỏi chữ trong ảnh nhất hiện có (cùng nhóm với Recraft), nhiều mức chất lượng/giá',
     kind: 'image',
+    estUsd: 0.06,
+    estBasis: 'per image (mức Balanced, giữa Turbo $0.03 và Quality $0.09)',
   },
 
   // ✅ khá
@@ -279,6 +349,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.025/megapixel',
     note: 'Chất lượng tốt, giá vừa phải, lựa chọn mặc định hợp lý',
     kind: 'image',
+    estUsd: 0.025,
+    estBasis: 'per image (ảnh ~1 megapixel x $0.025/MP)',
   },
   {
     id: 'fal-ai/stable-diffusion-v35-large',
@@ -287,6 +359,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.03-0.06/ảnh (ước lượng)',
     note: 'Model mã nguồn mở của Stability AI, chất lượng khá, linh hoạt fine-tune',
     kind: 'image',
+    estUsd: 0.045,
+    estBasis: 'per image (trung bình khoảng $0.03-0.06)',
   },
   {
     id: 'fal-ai/qwen-image',
@@ -295,6 +369,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.02-0.04/ảnh (ước lượng)',
     note: 'Model mã nguồn mở của Alibaba, chất lượng khá, giỏi chữ tiếng Trung/Anh',
     kind: 'image',
+    estUsd: 0.03,
+    estBasis: 'per image (trung bình khoảng $0.02-0.04)',
   },
   {
     id: 'fal-ai/hidream-i1-full',
@@ -303,6 +379,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '$0.05/megapixel',
     note: 'Model mã nguồn mở, chi tiết tốt, cạnh tranh với FLUX dev',
     kind: 'image',
+    estUsd: 0.05,
+    estBasis: 'per image (ảnh ~1 megapixel x $0.05/MP)',
   },
 
   // 💸 rẻ
@@ -313,6 +391,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.003/megapixel — rẻ nhất',
     note: 'Test/nháp — sinh rất nhanh và rẻ nhưng chi tiết kém hơn bản dev/pro',
     kind: 'image',
+    estUsd: 0.003,
+    estBasis: 'per image (ảnh ~1 megapixel x $0.003/MP)',
   },
   {
     id: 'fal-ai/sana',
@@ -321,6 +401,8 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.005-0.01/ảnh (ước lượng)',
     note: 'Rất nhanh và rẻ, chất lượng thấp hơn FLUX/SD nhưng đủ dùng để nháp',
     kind: 'image',
+    estUsd: 0.0075,
+    estBasis: 'per image (trung bình khoảng $0.005-0.01)',
   },
   {
     id: 'fal-ai/fast-sdxl',
@@ -329,5 +411,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.01/ảnh (ước lượng)',
     note: 'SDXL bản tối ưu tốc độ, rẻ và nhanh, hợp cho test hàng loạt',
     kind: 'image',
+    estUsd: 0.01,
+    estBasis: 'per image',
   },
 ];

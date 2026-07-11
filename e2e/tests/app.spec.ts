@@ -172,6 +172,11 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await page.goto('/');
     await applyWorkflowViaJsonView(page, sampleWorkflow());
 
+    // SPEC-step15.md §5 free-tier assert: a utility-only workflow (no
+    // fal/vbee/llm nodes) has zero estimated cost — the 💰 toolbar badge
+    // should settle on ~$0.00 once its debounced POST /api/estimate resolves.
+    await expect(page.getByTestId('cost-estimate')).toContainText('~$0.00', { timeout: 10_000 });
+
     await page.getByTestId('save-btn').click();
     await page.getByTestId('run-btn').click();
 

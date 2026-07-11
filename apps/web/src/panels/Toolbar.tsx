@@ -6,10 +6,13 @@
  * "✨ Describe" panel that turns a natural-language description into a
  * whole workflow via POST /api/agent/generate-workflow.
  */
-import { useState, type ChangeEvent } from 'react';
+import { useEffect, useState, type ChangeEvent } from 'react';
 import { ApiError, generateWorkflowFromDescription } from '../api/client.ts';
 import type { ValidationIssue } from '../api/types.ts';
 import { useFlowStore } from '../store/flow.ts';
+
+/** SPEC-step15.md §3: debounce delay before refreshing the 💰 estimate after a workflow edit. */
+const ESTIMATE_DEBOUNCE_MS = 800;
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Unexpected error';
@@ -36,6 +39,8 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
   const clearForceNodes = useFlowStore((s) => s.clearForceNodes);
   const showNodePreviews = useFlowStore((s) => s.showNodePreviews);
   const toggleNodePreviews = useFlowStore((s) => s.toggleNodePreviews);
+  const costEstimate = useFlowStore((s) => s.costEstimate);
+  const refreshEstimate = useFlowStore((s) => s.refreshEstimate);
 
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -52,6 +57,21 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
   const [generating, setGenerating] = useState(false);
   const [describeError, setDescribeError] = useState<string | null>(null);
   const [describeIssues, setDescribeIssues] = useState<ValidationIssue[]>([]);
+
+  // ---- 💰 cost estimate (SPEC-step15.md §3) ------------------------------
+  const [showEstimate, setShowEstimate] = useState(false);
+
+  // Debounced refresh (800ms after the workflow's own content last changed,
+  // not after every keystroke's render) — silent-fail is handled inside
+  // refreshEstimate() itself, so no try/catch needed here.
+  const workflowJson = JSON.stringify(workflow);
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void refreshEstimate();
+    }, ESTIMATE_DEBOUNCE_MS);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workflowJson]);
 
   const isRunning = runStatus === 'running';
 
@@ -226,6 +246,46 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
       >
         Run ⚡ bỏ cache
       </button>
+
+      <div className="relative">
+        <button
+          type="button"
+          data-testid="cost-estimate"
+          onClick={() => setShowEstimate((v) => !v)}
+          title="Ước tính chi phí chạy workflow"
+          className="rounded border border-slate-300 px-3 py-1 text-xs"
+        >
+          {costEstimate
+            ? `💰 ~$${costEstimate.totalUsd.toFixed(2)}${costEstimate.unknownCount > 0 ? ' +?' : ''}`
+            : '💰 ~$0.00'}
+        </button>
+        {showEstimate && costEstimate && (
+          <div className="absolute left-0 top-full z-10 mt-1 w-80 rounded border border-slate-200 bg-white p-2 shadow-lg">
+            <div className="mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold">Ước tính chi phí</span>
+              <button type="button" onClick={() => setShowEstimate(false)} className="text-xs text-slate-400">
+                ✕
+              </button>
+            </div>
+            <ul className="flex max-h-60 flex-col gap-1 overflow-y-auto">
+              {costEstimate.nodes.map((n) => (
+                <li key={n.nodeId} className="flex items-start justify-between gap-2 text-xs">
+                  <span className="text-slate-600">
+                    {n.nodeId} <span className="text-slate-400">({n.type})</span>
+                    <br />
+                    <span className="text-[11px] text-slate-400">{n.basis}</span>
+                  </span>
+                  <span className="whitespace-nowrap text-right font-medium">
+                    {n.usd === null ? '?' : `$${n.usd.toFixed(4)}`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="mt-2 text-xs font-semibold">Tổng: ~${costEstimate.totalUsd.toFixed(2)}</p>
+            <p className="mt-1 text-[11px] text-slate-400">{costEstimate.disclaimer}</p>
+          </div>
+        )}
+      </div>
 
       <button
         type="button"

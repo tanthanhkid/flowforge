@@ -4,6 +4,7 @@ import {
   createRun,
   createWorkflow,
   deleteWorkflow,
+  estimateWorkflowCost,
   getRegistry,
   getRun,
   getWorkflow,
@@ -90,6 +91,17 @@ describe('api client (CRUD + validate + runs)', () => {
     expect(res).toEqual({ ok: true, issues: [] });
     expect(lastCall()[0]).toBe('/api/workflows/validate');
     expect(lastCall()[1].method).toBe('POST');
+  });
+
+  it('estimateWorkflowCost: POST /api/estimate with the workflow JSON as body', async () => {
+    const estimate = { totalUsd: 1.23, unknownCount: 0, nodes: [], disclaimer: 'x' };
+    fetchMock.mockResolvedValueOnce(jsonResponse(estimate));
+    const res = await estimateWorkflowCost(sampleWorkflow);
+    expect(res).toEqual(estimate);
+    const [url, init] = lastCall();
+    expect(url).toBe('/api/estimate');
+    expect(init.method).toBe('POST');
+    expect(JSON.parse(init.body as string)).toEqual(sampleWorkflow);
   });
 
   it('createRun: POST /api/runs with the given body', async () => {

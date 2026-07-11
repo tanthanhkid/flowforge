@@ -16,6 +16,7 @@ import type { NodeRegistry } from './engine/registry.js';
 import { createDefaultRegistry } from './nodes/index.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerArtifactsRoutes } from './routes/artifacts.js';
+import { registerEstimateRoutes } from './routes/estimate.js';
 import { registerModelCatalogRoutes } from './routes/modelCatalog.js';
 import { registerRegistryRoutes } from './routes/registry.js';
 import { registerRunsRoutes } from './routes/runs.js';
@@ -99,6 +100,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   registerUploadRoutes(app, artifactsDir);
   registerAgentRoutes(app, { registry });
   registerSettingsRoutes(app, { envFilePath });
+  registerEstimateRoutes(app);
 
   app.addHook('onClose', async () => {
     db.close();

@@ -229,6 +229,9 @@ export interface FalModelPreset {
   cost: string;
   note?: string;
   kind: 'video-t2v' | 'video-i2v' | 'image';
+  /** Machine-readable estimate (SPEC-step15.md §1), used by the toolbar's 💰 badge. */
+  estUsd: number;
+  estBasis: string;
 }
 
 export interface OpenRouterModelPreset {
@@ -239,10 +242,31 @@ export interface OpenRouterModelPreset {
   cost: string;
   note?: string;
   kind: 'llm';
+  /** Machine-readable estimate (SPEC-step15.md §1), used by the toolbar's 💰 badge. */
+  estUsd: number;
+  estBasis: string;
 }
 
 export interface ModelCatalog {
   video: FalModelPreset[];
   image: FalModelPreset[];
   llm: OpenRouterModelPreset[];
+}
+
+// ---- routes/estimate.ts (POST /api/estimate, SPEC-step15.md §2) --------
+
+export interface NodeCostEstimate {
+  nodeId: string;
+  type: string;
+  /** null = không ước tính được (model id ngoài catalog). */
+  usd: number | null;
+  basis: string;
+  note?: string;
+}
+
+export interface CostEstimate {
+  totalUsd: number;
+  unknownCount: number;
+  nodes: NodeCostEstimate[];
+  disclaimer: string;
 }

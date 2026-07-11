@@ -280,14 +280,14 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
   };
 
   const imageModels: FalModelPreset[] = [
-    { id: 'fal-ai/flux-pro/v1.1-ultra', label: 'FLUX 1.1 pro ultra', tier: 'xin', cost: '~$0.05/ảnh', kind: 'image' },
-    { id: 'fal-ai/flux/dev', label: 'FLUX.1 dev', tier: 'kha', cost: '~$0.025/mp', kind: 'image' },
-    { id: 'fal-ai/flux/schnell', label: 'FLUX.1 schnell', tier: 're', cost: '~$0.003/mp', note: 'test/nháp', kind: 'image' },
+    { id: 'fal-ai/flux-pro/v1.1-ultra', label: 'FLUX 1.1 pro ultra', tier: 'xin', cost: '~$0.05/ảnh', kind: 'image', estUsd: 0.05, estBasis: 'per image' },
+    { id: 'fal-ai/flux/dev', label: 'FLUX.1 dev', tier: 'kha', cost: '~$0.025/mp', kind: 'image', estUsd: 0.025, estBasis: 'per image' },
+    { id: 'fal-ai/flux/schnell', label: 'FLUX.1 schnell', tier: 're', cost: '~$0.003/mp', note: 'test/nháp', kind: 'image', estUsd: 0.003, estBasis: 'per image' },
   ];
 
   const videoModels: FalModelPreset[] = [
-    { id: 'fal-ai/kling-video/t2v', label: 'Kling t2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-t2v' },
-    { id: 'fal-ai/kling-video/i2v', label: 'Kling i2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-i2v' },
+    { id: 'fal-ai/kling-video/t2v', label: 'Kling t2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-t2v', estUsd: 0.35, estBasis: 'per 5s clip' },
+    { id: 'fal-ai/kling-video/i2v', label: 'Kling i2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-i2v', estUsd: 0.35, estBasis: 'per 5s clip' },
   ];
 
   function renderModelIdNode(spec: NodeSpec, params: Record<string, unknown>, edges: Workflow['edges'] = []): void {
@@ -372,9 +372,9 @@ describe('ParamsPanel — llm model catalog select (SPEC-step14.md §3)', () => 
   };
 
   const llmModels: OpenRouterModelPreset[] = [
-    { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', tier: 'xin', cost: '$3 in / $15 out per 1M tokens', kind: 'llm' },
-    { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'kha', cost: '$0.3 in / $2.5 out per 1M tokens', kind: 'llm' },
-    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B', tier: 're', cost: '$0.1 in / $0.32 out per 1M tokens', kind: 'llm' },
+    { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', tier: 'xin', cost: '$3 in / $15 out per 1M tokens', kind: 'llm', estUsd: 0.0099, estBasis: 'per call' },
+    { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'kha', cost: '$0.3 in / $2.5 out per 1M tokens', kind: 'llm', estUsd: 0.00149, estBasis: 'per call' },
+    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B', tier: 're', cost: '$0.1 in / $0.32 out per 1M tokens', kind: 'llm', estUsd: 0.00024, estBasis: 'per call' },
   ];
 
   function renderLlmNode(params: Record<string, unknown>): void {

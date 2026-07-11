@@ -2,7 +2,7 @@
  * samples.test.ts (SPEC-step8.md §1/§5, extended by SPEC-step11.md §4):
  * every `samples/*.json` file at the repo root must parse as valid JSON and
  * pass `validateWorkflow()` against `createDefaultRegistry()` — proving the
- * 9 sample workflows are runnable against the real node registry, not just
+ * 11 sample workflows are runnable against the real node registry, not just
  * well-formed JSON. Also covers the bundled `samples/assets/*` files used by
  * the 4 new input.image/input.pdf/input.markdown samples added in step 11.
  */
@@ -32,17 +32,19 @@ const EXPECTED_INPUT_NODE_TYPE: Record<string, string> = {
 };
 
 describe('samples/*.json', () => {
-  it('finds all 9 expected sample files', () => {
+  it('finds all 11 expected sample files', () => {
     expect(files).toEqual([
       'sample-image-to-video.json',
       'sample-md-to-voiceover.json',
       'sample-pdf-to-post.json',
+      'sample-premium-video.json',
       'sample-product-post.json',
       'sample-quote-card.json',
       'sample-reels-voiceover.json',
       'sample-stock-motion.json',
       'sample-stock-restyle.json',
       'sample-tips-listicle.json',
+      'sample-value-video.json',
     ]);
   });
 
@@ -77,9 +79,22 @@ describe('samples/*.json', () => {
 
       // sample-reels-voiceover (SPEC-step12.md §2): must ghép video+voiceover
       // locally via video.compose rather than leaving them as separate outputs.
-      if (file === 'sample-reels-voiceover.json') {
+      // sample-premium-video (SPEC-step15.md §4) follows the same pattern.
+      if (
+        file === 'sample-reels-voiceover.json' ||
+        file === 'sample-premium-video.json' ||
+        file === 'sample-value-video.json'
+      ) {
         const composeNodes = result.workflow.nodes.filter((n) => n.type === 'video.compose');
         expect(composeNodes.length).toBe(1);
+      }
+
+      // sample-value-video (scope addition, SPEC-step15.md §4): must use the
+      // Kling 2.5 Turbo Pro model — the whole point of this "best value"
+      // sample is a near-flagship-quality video model at ~1/9 Veo3's price.
+      if (file === 'sample-value-video.json') {
+        const videoNode = result.workflow.nodes.find((n) => n.type === 'fal.video');
+        expect(videoNode?.params.modelId).toBe('fal-ai/kling-video/v2.5-turbo/pro/text-to-video');
       }
     });
   }
