@@ -6,6 +6,7 @@
  * registered.
  */
 import { FAL_IMAGE_MODELS, FAL_VIDEO_MODELS, type FalModelPreset } from '../catalog/falModels.js';
+import { OPENROUTER_LLM_MODELS, type OpenRouterModelPreset } from '../catalog/openrouterModels.js';
 import type { NodeRegistry } from '../engine/registry.js';
 import type { Workflow } from '../engine/schema.js';
 
@@ -15,7 +16,7 @@ const TIER_LABEL: Record<FalModelPreset['tier'], string> = {
   re: '💸 rẻ',
 };
 
-function formatModelLine(model: FalModelPreset): string {
+function formatModelLine(model: FalModelPreset | OpenRouterModelPreset): string {
   const note = model.note ? ` — ${model.note}` : '';
   return `- [${TIER_LABEL[model.tier]}] ${model.id} (${model.label}), giá: ${model.cost}${note}`;
 }
@@ -38,6 +39,23 @@ function buildFalCatalogSection(): string {
     ...FAL_IMAGE_MODELS.map(formatModelLine),
     '',
     'Luật chọn tier: mặc định chọn tier "kha" (✅ khá); nếu người dùng nói "đẹp"/"xịn"/"chất lượng cao" thì chọn tier "xin" (💎 xịn); nếu người dùng nói "rẻ"/"test"/"nháp" thì chọn tier "re" (💸 rẻ). Nếu node fal.video có input "image" được nối (image-to-video), ưu tiên chọn id có kind "video-i2v".',
+  ].join('\n');
+}
+
+/**
+ * "MODEL CATALOG (OpenRouter LLM)" section (SPEC-step14.md §2-3): rendered
+ * from the same curated `openrouterModels.ts` catalog the UI's ParamsPanel
+ * select reads, for `llm.generate`/`llm.transform`'s `model` param — which
+ * stays a free-form string (the agent MAY still emit an id outside this
+ * list if the user names one).
+ */
+function buildOpenRouterCatalogSection(): string {
+  return [
+    'MODEL CATALOG (OpenRouter LLM) — dùng để chọn "model" cho node llm.generate / llm.transform:',
+    '',
+    ...OPENROUTER_LLM_MODELS.map(formatModelLine),
+    '',
+    'Luật chọn model: mặc định để params.model = "" (chuỗi rỗng — hệ thống sẽ tự dùng model mặc định OPENROUTER_DEFAULT_MODEL), TRỪ KHI người dùng yêu cầu một model cụ thể hoặc nói rõ về chi phí/chất lượng (vd "dùng Claude", "rẻ nhất có thể", "chất lượng cao nhất") — khi đó chọn id phù hợp từ catalog trên theo cùng luật tier ở trên (mặc định "kha", "đẹp/xịn" → "xin", "rẻ/test" → "re").',
   ].join('\n');
 }
 
@@ -222,6 +240,8 @@ export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
     '',
     buildFalCatalogSection(),
     '',
+    buildOpenRouterCatalogSection(),
+    '',
     GENERATE_RULES,
     '',
     fewshot1,
@@ -246,6 +266,8 @@ export function buildEditSystemPrompt(registry: NodeRegistry, workflow: Workflow
     catalog,
     '',
     buildFalCatalogSection(),
+    '',
+    buildOpenRouterCatalogSection(),
     '',
     'Workflow hiện tại:',
     workflowJson,

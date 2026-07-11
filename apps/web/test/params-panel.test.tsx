@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FalModelPreset, NodeSpec, Workflow } from '../src/api/types.ts';
+import type { FalModelPreset, NodeSpec, OpenRouterModelPreset, Workflow } from '../src/api/types.ts';
 import { ParamsPanel } from '../src/panels/ParamsPanel.tsx';
 import { useFlowStore } from '../src/store/flow.ts';
 
@@ -34,7 +34,7 @@ function resetStore(workflow: Workflow): void {
     workflow,
     selectedNodeId: workflow.nodes[0]?.id ?? null,
     registry: [spec],
-    modelCatalog: { video: [], image: [] },
+    modelCatalog: { video: [], image: [], llm: [] },
     runId: undefined,
     runStatus: undefined,
     nodeRuns: {},
@@ -300,7 +300,7 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
     });
     useFlowStore.setState({
       registry: [spec],
-      modelCatalog: { video: videoModels, image: imageModels },
+      modelCatalog: { video: videoModels, image: imageModels, llm: [] },
     });
     render(<ParamsPanel />);
   }
@@ -353,5 +353,72 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
     expect(i2vIndex).toBeGreaterThanOrEqual(0);
     expect(t2vIndex).toBeGreaterThanOrEqual(0);
     expect(i2vIndex).toBeLessThan(t2vIndex);
+  });
+});
+
+// SPEC-step14.md §3/§4 — llm.generate/llm.transform's `model` param: same
+// tiered select pattern, plus a leading "🔧 Mặc định hệ thống" option -> ''.
+describe('ParamsPanel — llm model catalog select (SPEC-step14.md §3)', () => {
+  const llmGenerateSpec: NodeSpec = {
+    type: 'llm.generate',
+    category: 'llm',
+    title: 'LLM: Sinh văn bản',
+    inputs: { prompt: { type: 'text', required: true } },
+    outputs: { text: { type: 'text' } },
+    paramsJsonSchema: {
+      type: 'object',
+      properties: { model: { type: 'string', default: '' }, system: { type: 'string' } },
+    },
+  };
+
+  const llmModels: OpenRouterModelPreset[] = [
+    { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', tier: 'xin', cost: '$3 in / $15 out per 1M tokens', kind: 'llm' },
+    { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'kha', cost: '$0.3 in / $2.5 out per 1M tokens', kind: 'llm' },
+    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B', tier: 're', cost: '$0.1 in / $0.32 out per 1M tokens', kind: 'llm' },
+  ];
+
+  function renderLlmNode(params: Record<string, unknown>): void {
+    resetStore({
+      version: 1,
+      id: 'wf1',
+      name: 'Test',
+      nodes: [{ id: 'n1', type: 'llm.generate', params }],
+      edges: [],
+    });
+    useFlowStore.setState({
+      registry: [llmGenerateSpec],
+      modelCatalog: { video: [], image: [], llm: llmModels },
+    });
+    render(<ParamsPanel />);
+  }
+
+  it('renders a select for "model" with the default option first, then the 3 tier groups', () => {
+    renderLlmNode({ model: '' });
+    const selects = screen.getAllByRole('combobox');
+    const modelSelect = selects.find((s) => within(s).queryByText(/Mặc định hệ thống/)) as HTMLSelectElement;
+    expect(modelSelect).toBeDefined();
+    const options = Array.from(modelSelect.querySelectorAll('option, optgroup'));
+    expect(options[0]?.tagName).toBe('OPTION');
+    expect(options[0]?.textContent).toContain('Mặc định hệ thống');
+    expect(modelSelect).toHaveValue('');
+  });
+
+  it('choosing a preset sets params.model to that id', () => {
+    renderLlmNode({ model: '' });
+    const selects = screen.getAllByRole('combobox');
+    const modelSelect = selects.find((s) => within(s).queryByText(/Mặc định hệ thống/)) as HTMLSelectElement;
+    fireEvent.change(modelSelect, { target: { value: 'anthropic/claude-sonnet-4.5' } });
+    expect(useFlowStore.getState().workflow.nodes[0]?.params.model).toBe('anthropic/claude-sonnet-4.5');
+  });
+
+  it('custom free-text model id still works via "Tự nhập model id..."', () => {
+    renderLlmNode({ model: 'some/custom-model' });
+    const selects = screen.getAllByRole('combobox');
+    const modelSelect = selects.find((s) => within(s).queryByText(/Mặc định hệ thống/)) as HTMLSelectElement;
+    expect(modelSelect).toHaveValue('__custom__');
+    expect(screen.getByDisplayValue('some/custom-model')).toBeInTheDocument();
+    const input = screen.getByDisplayValue('some/custom-model');
+    fireEvent.change(input, { target: { value: 'some/other-model' } });
+    expect(useFlowStore.getState().workflow.nodes[0]?.params.model).toBe('some/other-model');
   });
 });

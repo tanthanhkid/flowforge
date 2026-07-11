@@ -18,37 +18,68 @@
  *                                         escape hatch that reveals a free
  *                                         text input (keeps the original
  *                                         free-form modelId param intact)
+ *   - model on llm.generate/llm.transform -> same tiered <select> pattern,
+ *                                         over the curated OpenRouter catalog
+ *                                         (SPEC-step14.md §3), with an extra
+ *                                         first option "🔧 Mặc định hệ thống"
+ *                                         mapped to value '' (params.model
+ *                                         '' already means "use
+ *                                         OPENROUTER_DEFAULT_MODEL" server-side)
  */
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { uploadFile } from '../api/client.ts';
-import type { FalModelPreset, JsonSchemaProperty } from '../api/types.ts';
+import type { JsonSchemaProperty } from '../api/types.ts';
 import { useFlowStore } from '../store/flow.ts';
 
 const CUSTOM_MODEL_OPTION = '__custom__';
 
-const TIER_GROUP_LABEL: Record<FalModelPreset['tier'], string> = {
+type ModelTier = 'xin' | 'kha' | 're';
+
+/** Fields `ModelIdField` needs — both `FalModelPreset` and `OpenRouterModelPreset` satisfy this. */
+interface CatalogPresetLike {
+  id: string;
+  label: string;
+  tier: ModelTier;
+  cost: string;
+  note?: string;
+  kind?: string;
+}
+
+const TIER_GROUP_LABEL: Record<ModelTier, string> = {
   xin: '💎 Xịn',
   kha: '✅ Khá',
   re: '💸 Rẻ',
 };
 
-const TIER_ORDER: FalModelPreset['tier'][] = ['xin', 'kha', 're'];
+const TIER_ORDER: ModelTier[] = ['xin', 'kha', 're'];
 
 interface ModelIdFieldProps {
   name: string;
   value: unknown;
-  models: FalModelPreset[];
+  models: CatalogPresetLike[];
   /** fal.video with an edge into its "image" input: prioritize video-i2v within each tier (SPEC-step13.md §3). */
   preferI2V?: boolean;
+  /**
+   * llm.generate/llm.transform's `model` param (SPEC-step14.md §3): an extra
+   * first option ABOVE the tier groups, e.g. "🔧 Mặc định hệ thống" -> ''.
+   * Selecting it (or the field already holding this value) is treated as
+   * neither "matched" nor "custom" — it's its own third select state.
+   */
+  defaultOption?: { label: string; value: string };
   onApply: (value: unknown) => void;
 }
 
-/** fal.image/fal.video's `modelId` param: tiered select + free-text escape hatch. */
-function ModelIdField({ name, value, models, preferI2V, onApply }: ModelIdFieldProps) {
+/**
+ * fal.image/fal.video's `modelId` param AND llm.generate/llm.transform's
+ * `model` param: tiered select + free-text escape hatch (+ optional
+ * "mặc định hệ thống" leading option for the llm case).
+ */
+function ModelIdField({ name, value, models, preferI2V, defaultOption, onApply }: ModelIdFieldProps) {
   const stringValue = value === undefined || value === null ? '' : String(value);
-  const matched = models.find((m) => m.id === stringValue);
-  const isCustom = stringValue !== '' && !matched;
+  const isDefaultSelected = defaultOption !== undefined && stringValue === defaultOption.value;
+  const matched = isDefaultSelected ? undefined : models.find((m) => m.id === stringValue);
+  const isCustom = !isDefaultSelected && stringValue !== '' && !matched;
 
   // Explicitly picking "✏️ Tự nhập model id..." must switch the UI into
   // custom mode WITHOUT touching the (still-matched) store value — that
@@ -77,6 +108,7 @@ function ModelIdField({ name, value, models, preferI2V, onApply }: ModelIdFieldP
         value={selectValue}
         onChange={(event) => handleSelectChange(event.target.value)}
       >
+        {defaultOption && <option value={defaultOption.value}>{defaultOption.label}</option>}
         {TIER_ORDER.map((tier) => {
           const inTier = models
             .filter((m) => m.tier === tier)
@@ -375,6 +407,13 @@ export function ParamsPanel() {
   const preferI2V =
     node.type === 'fal.video' && workflow.edges.some((e) => e.to.node === node.id && e.to.port === 'image');
 
+  // SPEC-step14.md §3 — llm.generate/llm.transform's `model` param gets the
+  // same tiered select over the curated OpenRouter catalog, plus a leading
+  // "🔧 Mặc định hệ thống" option mapped to value '' (server resolves '' to
+  // OPENROUTER_DEFAULT_MODEL — see nodes/llm.generate.ts / llm.transform.ts).
+  const isLlmModelField = node.type === 'llm.generate' || node.type === 'llm.transform';
+  const llmModels = isLlmModelField ? modelCatalog.llm : undefined;
+
   return (
     <div className="flex flex-col gap-3 p-3 text-sm">
       <div>
@@ -392,6 +431,15 @@ export function ParamsPanel() {
               value={node.params[name]}
               models={modelIdModels}
               preferI2V={preferI2V}
+              onApply={(value) => applyField(name, value)}
+            />
+          ) : name === 'model' && llmModels && llmModels.length > 0 ? (
+            <ModelIdField
+              key={name}
+              name={name}
+              value={node.params[name]}
+              models={llmModels}
+              defaultOption={{ label: '🔧 Mặc định hệ thống', value: '' }}
               onApply={(value) => applyField(name, value)}
             />
           ) : (

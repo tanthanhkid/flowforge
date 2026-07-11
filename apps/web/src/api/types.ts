@@ -220,7 +220,7 @@ export interface SettingSummary {
   value?: string;
 }
 
-// ---- routes/modelCatalog.ts (GET /api/model-catalog, SPEC-step13.md §1-2) --
+// ---- routes/modelCatalog.ts (GET /api/model-catalog, SPEC-step13.md §1-2, +llm SPEC-step14.md §2) --
 
 export interface FalModelPreset {
   id: string;
@@ -231,7 +231,18 @@ export interface FalModelPreset {
   kind: 'video-t2v' | 'video-i2v' | 'image';
 }
 
+export interface OpenRouterModelPreset {
+  id: string;
+  label: string;
+  tier: 'xin' | 'kha' | 're';
+  /** "$X in / $Y out per 1M tokens". */
+  cost: string;
+  note?: string;
+  kind: 'llm';
+}
+
 export interface ModelCatalog {
   video: FalModelPreset[];
   image: FalModelPreset[];
+  llm: OpenRouterModelPreset[];
 }

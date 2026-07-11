@@ -12,6 +12,7 @@ import {
   GENERATE_FEWSHOT_SCRIPT_VBEE,
 } from '../src/agent/promptBuilder.js';
 import { FAL_IMAGE_MODELS, FAL_VIDEO_MODELS } from '../src/catalog/falModels.js';
+import { OPENROUTER_LLM_MODELS } from '../src/catalog/openrouterModels.js';
 import { createDefaultRegistry } from '../src/nodes/index.js';
 import { WorkflowSchema, validateWorkflow } from '../src/engine/schema.js';
 
@@ -87,6 +88,14 @@ describe('buildGenerateSystemPrompt', () => {
     expect(prompt).toContain(xinModel!.id);
     expect(prompt).toMatch(/mặc định chọn tier "kha"/);
   });
+
+  // SPEC-step14.md §2/§3/§4 — the "MODEL CATALOG (OpenRouter LLM)" section +
+  // the "params.model = ''" default rule.
+  it('contains the MODEL CATALOG (OpenRouter LLM) section with an id + the default-"" rule', () => {
+    expect(prompt).toContain('MODEL CATALOG (OpenRouter LLM)');
+    expect(prompt).toContain(OPENROUTER_LLM_MODELS[0]!.id);
+    expect(prompt).toMatch(/params\.model = ""/);
+  });
 });
 
 describe('buildEditSystemPrompt', () => {
@@ -121,5 +130,10 @@ describe('buildEditSystemPrompt', () => {
   it('also contains the MODEL CATALOG (fal) section', () => {
     const prompt = buildEditSystemPrompt(registry, workflow, 'a');
     expect(prompt).toContain('MODEL CATALOG (fal)');
+  });
+
+  it('also contains the MODEL CATALOG (OpenRouter LLM) section', () => {
+    const prompt = buildEditSystemPrompt(registry, workflow, 'a');
+    expect(prompt).toContain('MODEL CATALOG (OpenRouter LLM)');
   });
 });

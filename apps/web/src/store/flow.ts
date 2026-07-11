@@ -35,7 +35,11 @@ export interface FlowState {
   workflow: Workflow;
   selectedNodeId: string | null;
   registry: NodeSpec[];
-  /** SPEC-step13.md §3 — fal.image/fal.video model presets, fetched once alongside the registry. */
+  /**
+   * SPEC-step13.md §3 — fal.image/fal.video model presets, fetched once
+   * alongside the registry. `llm` added by SPEC-step14.md §2/§3 for
+   * llm.generate/llm.transform's `model` param.
+   */
   modelCatalog: ModelCatalog;
   runId?: string;
   runStatus?: RunStatus;
@@ -183,7 +187,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   workflow: emptyWorkflow(),
   selectedNodeId: null,
   registry: [],
-  modelCatalog: { video: [], image: [] },
+  modelCatalog: { video: [], image: [], llm: [] },
   runId: undefined,
   runStatus: undefined,
   nodeRuns: {},
