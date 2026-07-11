@@ -9,6 +9,7 @@ import type {
   CreateRunBody,
   EditNodeResult,
   GenerateWorkflowResult,
+  ModelCatalog,
   NodeLogEvent,
   NodeSpec,
   NodeStateEvent,
@@ -70,6 +71,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export async function getRegistry(): Promise<NodeSpec[]> {
   const res = await request<{ nodes: NodeSpec[] }>('/api/registry');
   return res.nodes;
+}
+
+// ---- model catalog (SPEC-step13.md §2) -----------------------------------
+
+export function getModelCatalog(): Promise<ModelCatalog> {
+  return request('/api/model-catalog');
 }
 
 // ---- workflows --------------------------------------------------------

@@ -5,8 +5,41 @@
  * list — so the prompt always matches whatever node types are actually
  * registered.
  */
+import { FAL_IMAGE_MODELS, FAL_VIDEO_MODELS, type FalModelPreset } from '../catalog/falModels.js';
 import type { NodeRegistry } from '../engine/registry.js';
 import type { Workflow } from '../engine/schema.js';
+
+const TIER_LABEL: Record<FalModelPreset['tier'], string> = {
+  xin: '💎 xịn',
+  kha: '✅ khá',
+  re: '💸 rẻ',
+};
+
+function formatModelLine(model: FalModelPreset): string {
+  const note = model.note ? ` — ${model.note}` : '';
+  return `- [${TIER_LABEL[model.tier]}] ${model.id} (${model.label}), giá: ${model.cost}${note}`;
+}
+
+/**
+ * "MODEL CATALOG (fal)" section (SPEC-step13.md §2): rendered from the same
+ * curated `falModels.ts` catalog the UI's ParamsPanel select reads, so the
+ * agent picks `modelId` values that are actually good defaults — while
+ * `fal.image`/`fal.video`'s `modelId` param stays a free-form string (the
+ * agent MAY still emit an id outside this list if the user names one).
+ */
+function buildFalCatalogSection(): string {
+  return [
+    'MODEL CATALOG (fal) — dùng để chọn "modelId" cho node fal.image / fal.video:',
+    '',
+    'Video:',
+    ...FAL_VIDEO_MODELS.map(formatModelLine),
+    '',
+    'Image:',
+    ...FAL_IMAGE_MODELS.map(formatModelLine),
+    '',
+    'Luật chọn tier: mặc định chọn tier "kha" (✅ khá); nếu người dùng nói "đẹp"/"xịn"/"chất lượng cao" thì chọn tier "xin" (💎 xịn); nếu người dùng nói "rẻ"/"test"/"nháp" thì chọn tier "re" (💸 rẻ). Nếu node fal.video có input "image" được nối (image-to-video), ưu tiên chọn id có kind "video-i2v".',
+  ].join('\n');
+}
 
 const WORKFLOW_SCHEMA_DESCRIPTION = `
 Workflow JSON schema (version 1):
@@ -187,6 +220,8 @@ export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
     'Catalog các node type khả dụng (type, category, title, description, inputs/outputs kèm port type + required, paramsJsonSchema):',
     catalog,
     '',
+    buildFalCatalogSection(),
+    '',
     GENERATE_RULES,
     '',
     fewshot1,
@@ -209,6 +244,8 @@ export function buildEditSystemPrompt(registry: NodeRegistry, workflow: Workflow
     '',
     'Catalog các node type khả dụng (type, category, title, description, inputs/outputs kèm port type + required, paramsJsonSchema):',
     catalog,
+    '',
+    buildFalCatalogSection(),
     '',
     'Workflow hiện tại:',
     workflowJson,

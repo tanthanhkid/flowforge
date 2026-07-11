@@ -219,3 +219,19 @@ export interface SettingSummary {
   /** Only present for non-secret keys, and only when set. */
   value?: string;
 }
+
+// ---- routes/modelCatalog.ts (GET /api/model-catalog, SPEC-step13.md §1-2) --
+
+export interface FalModelPreset {
+  id: string;
+  label: string;
+  tier: 'xin' | 'kha' | 're';
+  cost: string;
+  note?: string;
+  kind: 'video-t2v' | 'video-i2v' | 'image';
+}
+
+export interface ModelCatalog {
+  video: FalModelPreset[];
+  image: FalModelPreset[];
+}

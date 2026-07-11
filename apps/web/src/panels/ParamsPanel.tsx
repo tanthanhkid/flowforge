@@ -12,12 +12,111 @@
  *   - string (default)                -> text input, or a textarea when the
  *                                         field name is system/template/
  *                                         instruction or has a large maxLength
+ *   - modelId on fal.image/fal.video  -> tiered <select> over the curated
+ *                                         fal model catalog (SPEC-step13.md
+ *                                         §3), with a "✏️ Tự nhập model id..."
+ *                                         escape hatch that reveals a free
+ *                                         text input (keeps the original
+ *                                         free-form modelId param intact)
  */
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { uploadFile } from '../api/client.ts';
-import type { JsonSchemaProperty } from '../api/types.ts';
+import type { FalModelPreset, JsonSchemaProperty } from '../api/types.ts';
 import { useFlowStore } from '../store/flow.ts';
+
+const CUSTOM_MODEL_OPTION = '__custom__';
+
+const TIER_GROUP_LABEL: Record<FalModelPreset['tier'], string> = {
+  xin: '💎 Xịn',
+  kha: '✅ Khá',
+  re: '💸 Rẻ',
+};
+
+const TIER_ORDER: FalModelPreset['tier'][] = ['xin', 'kha', 're'];
+
+interface ModelIdFieldProps {
+  name: string;
+  value: unknown;
+  models: FalModelPreset[];
+  /** fal.video with an edge into its "image" input: prioritize video-i2v within each tier (SPEC-step13.md §3). */
+  preferI2V?: boolean;
+  onApply: (value: unknown) => void;
+}
+
+/** fal.image/fal.video's `modelId` param: tiered select + free-text escape hatch. */
+function ModelIdField({ name, value, models, preferI2V, onApply }: ModelIdFieldProps) {
+  const stringValue = value === undefined || value === null ? '' : String(value);
+  const matched = models.find((m) => m.id === stringValue);
+  const isCustom = stringValue !== '' && !matched;
+
+  // Explicitly picking "✏️ Tự nhập model id..." must switch the UI into
+  // custom mode WITHOUT touching the (still-matched) store value — that
+  // can't be derived from `value` alone, so it needs its own bit of state
+  // (SPEC-step13.md §3: "đổi sang 'Tự nhập' giữ được value").
+  const [manualCustom, setManualCustom] = useState(false);
+  const showCustomInput = isCustom || manualCustom;
+  const selectValue = showCustomInput ? CUSTOM_MODEL_OPTION : stringValue;
+
+  function handleSelectChange(raw: string): void {
+    if (raw === CUSTOM_MODEL_OPTION) {
+      // Switching to "Tự nhập" keeps the current value untouched — the text
+      // input below simply becomes editable for it (SPEC-step13.md §3).
+      setManualCustom(true);
+      return;
+    }
+    setManualCustom(false);
+    onApply(raw);
+  }
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-xs font-medium text-slate-600">{name}</span>
+      <select
+        className="rounded border border-slate-300 px-2 py-1 text-xs"
+        value={selectValue}
+        onChange={(event) => handleSelectChange(event.target.value)}
+      >
+        {TIER_ORDER.map((tier) => {
+          const inTier = models
+            .filter((m) => m.tier === tier)
+            .sort((a, b) => {
+              if (!preferI2V) return 0;
+              const aFirst = a.kind === 'video-i2v' ? -1 : 0;
+              const bFirst = b.kind === 'video-i2v' ? -1 : 0;
+              return aFirst - bFirst;
+            });
+          if (inTier.length === 0) return null;
+          return (
+            <optgroup key={tier} label={TIER_GROUP_LABEL[tier]}>
+              {inTier.map((model) => (
+                <option key={model.id} value={model.id} title={[model.note, model.id].filter(Boolean).join(' — ')}>
+                  {model.label} — {model.cost}
+                </option>
+              ))}
+            </optgroup>
+          );
+        })}
+        <option value={CUSTOM_MODEL_OPTION}>✏️ Tự nhập model id...</option>
+      </select>
+      {matched && (
+        <span className="text-[10px] text-slate-400">
+          {matched.cost}
+          {matched.note ? ` — ${matched.note}` : ''}
+        </span>
+      )}
+      {showCustomInput && (
+        <input
+          type="text"
+          className="rounded border border-slate-300 px-2 py-1 text-xs"
+          value={stringValue}
+          placeholder="fal-ai/..."
+          onChange={(event) => onApply(event.target.value)}
+        />
+      )}
+    </label>
+  );
+}
 
 // `content` (SPEC-step10.md §2): input.markdown's "type text directly" mode
 // needs a big textarea just like system/template/instruction do.
@@ -180,6 +279,7 @@ export function ParamsPanel() {
   const workflow = useFlowStore((s) => s.workflow);
   const selectedNodeId = useFlowStore((s) => s.selectedNodeId);
   const registry = useFlowStore((s) => s.registry);
+  const modelCatalog = useFlowStore((s) => s.modelCatalog);
   const updateNodeParams = useFlowStore((s) => s.updateNodeParams);
   const removeNode = useFlowStore((s) => s.removeNode);
   const forceNodeIds = useFlowStore((s) => s.forceNodeIds);
@@ -268,6 +368,13 @@ export function ParamsPanel() {
   const currentPath = node.params.path;
   const showImageThumb = node.type === 'input.image' && typeof currentPath === 'string' && currentPath.length > 0;
 
+  // SPEC-step13.md §3 — fal.image/fal.video's `modelId` gets the tiered
+  // catalog select instead of a plain text input.
+  const modelIdModels =
+    node.type === 'fal.image' ? modelCatalog.image : node.type === 'fal.video' ? modelCatalog.video : undefined;
+  const preferI2V =
+    node.type === 'fal.video' && workflow.edges.some((e) => e.to.node === node.id && e.to.port === 'image');
+
   return (
     <div className="flex flex-col gap-3 p-3 text-sm">
       <div>
@@ -277,21 +384,32 @@ export function ParamsPanel() {
       </div>
 
       <div className="flex flex-col gap-2">
-        {Object.entries(properties).map(([name, schema]) => (
-          <ParamField
-            key={name}
-            name={name}
-            schema={schema}
-            value={node.params[name]}
-            numberDraft={numberDrafts[name]}
-            numberError={numberErrors[name] ?? false}
-            jsonDraft={jsonDrafts[name]}
-            jsonError={jsonErrors[name] ?? false}
-            onApply={(value) => applyField(name, value)}
-            onNumberChange={(raw) => handleNumberChange(name, schema, raw)}
-            onJsonChange={(raw) => handleJsonChange(name, raw)}
-          />
-        ))}
+        {Object.entries(properties).map(([name, schema]) =>
+          name === 'modelId' && modelIdModels && modelIdModels.length > 0 ? (
+            <ModelIdField
+              key={name}
+              name={name}
+              value={node.params[name]}
+              models={modelIdModels}
+              preferI2V={preferI2V}
+              onApply={(value) => applyField(name, value)}
+            />
+          ) : (
+            <ParamField
+              key={name}
+              name={name}
+              schema={schema}
+              value={node.params[name]}
+              numberDraft={numberDrafts[name]}
+              numberError={numberErrors[name] ?? false}
+              jsonDraft={jsonDrafts[name]}
+              jsonError={jsonErrors[name] ?? false}
+              onApply={(value) => applyField(name, value)}
+              onNumberChange={(raw) => handleNumberChange(name, schema, raw)}
+              onJsonChange={(raw) => handleJsonChange(name, raw)}
+            />
+          ),
+        )}
         {Object.keys(properties).length === 0 && <p className="text-xs text-slate-400">Node này không có params.</p>}
       </div>
 

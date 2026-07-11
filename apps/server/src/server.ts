@@ -16,6 +16,7 @@ import type { NodeRegistry } from './engine/registry.js';
 import { createDefaultRegistry } from './nodes/index.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerArtifactsRoutes } from './routes/artifacts.js';
+import { registerModelCatalogRoutes } from './routes/modelCatalog.js';
 import { registerRegistryRoutes } from './routes/registry.js';
 import { registerRunsRoutes } from './routes/runs.js';
 import { registerSettingsRoutes } from './routes/settings.js';
@@ -91,6 +92,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   app.get('/api/health', async () => ({ ok: true }));
 
   registerRegistryRoutes(app, registry);
+  registerModelCatalogRoutes(app);
   registerWorkflowsRoutes(app, { workflowsRepo, registry });
   registerRunsRoutes(app, { runManager, workflowsRepo, db });
   registerArtifactsRoutes(app, artifactsDir);

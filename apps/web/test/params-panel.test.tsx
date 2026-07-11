@@ -1,6 +1,6 @@
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { NodeSpec, Workflow } from '../src/api/types.ts';
+import type { FalModelPreset, NodeSpec, Workflow } from '../src/api/types.ts';
 import { ParamsPanel } from '../src/panels/ParamsPanel.tsx';
 import { useFlowStore } from '../src/store/flow.ts';
 
@@ -34,6 +34,7 @@ function resetStore(workflow: Workflow): void {
     workflow,
     selectedNodeId: workflow.nodes[0]?.id ?? null,
     registry: [spec],
+    modelCatalog: { video: [], image: [] },
     runId: undefined,
     runStatus: undefined,
     nodeRuns: {},
@@ -248,5 +249,109 @@ describe('ParamsPanel — file upload (SPEC-step10.md §2)', () => {
     expect(document.querySelector('textarea')).toBeInTheDocument();
     expect(screen.getByTestId('upload-file-btn')).toBeInTheDocument();
     expect(screen.getByTestId('upload-file-input')).toHaveAttribute('accept', '.md,.markdown,.txt');
+  });
+});
+
+// SPEC-step13.md §3 — fal.image/fal.video's `modelId` param: tiered select
+// over the model catalog + "✏️ Tự nhập model id..." free-text escape hatch.
+describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
+  const falImageSpec: NodeSpec = {
+    type: 'fal.image',
+    category: 'image',
+    title: 'fal.ai: Sinh ảnh',
+    inputs: { prompt: { type: 'text', required: true } },
+    outputs: { image: { type: 'image' } },
+    paramsJsonSchema: {
+      type: 'object',
+      properties: { modelId: { type: 'string', default: 'fal-ai/flux/dev' } },
+    },
+  };
+
+  const falVideoSpec: NodeSpec = {
+    type: 'fal.video',
+    category: 'video',
+    title: 'fal.ai: Sinh video',
+    inputs: { prompt: { type: 'text', required: true }, image: { type: 'image', required: false } },
+    outputs: { video: { type: 'video' } },
+    paramsJsonSchema: {
+      type: 'object',
+      properties: { modelId: { type: 'string' } },
+    },
+  };
+
+  const imageModels: FalModelPreset[] = [
+    { id: 'fal-ai/flux-pro/v1.1-ultra', label: 'FLUX 1.1 pro ultra', tier: 'xin', cost: '~$0.05/ảnh', kind: 'image' },
+    { id: 'fal-ai/flux/dev', label: 'FLUX.1 dev', tier: 'kha', cost: '~$0.025/mp', kind: 'image' },
+    { id: 'fal-ai/flux/schnell', label: 'FLUX.1 schnell', tier: 're', cost: '~$0.003/mp', note: 'test/nháp', kind: 'image' },
+  ];
+
+  const videoModels: FalModelPreset[] = [
+    { id: 'fal-ai/kling-video/t2v', label: 'Kling t2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-t2v' },
+    { id: 'fal-ai/kling-video/i2v', label: 'Kling i2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-i2v' },
+  ];
+
+  function renderModelIdNode(spec: NodeSpec, params: Record<string, unknown>, edges: Workflow['edges'] = []): void {
+    resetStore({
+      version: 1,
+      id: 'wf1',
+      name: 'Test',
+      nodes: [{ id: 'n1', type: spec.type, params }],
+      edges,
+    });
+    useFlowStore.setState({
+      registry: [spec],
+      modelCatalog: { video: videoModels, image: imageModels },
+    });
+    render(<ParamsPanel />);
+  }
+
+  it('shows all 3 tier groups for fal.image', () => {
+    renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
+    const select = screen.getByRole('combobox');
+    const optgroups = select.querySelectorAll('optgroup');
+    expect(Array.from(optgroups).map((g) => g.getAttribute('label'))).toEqual(['💎 Xịn', '✅ Khá', '💸 Rẻ']);
+    expect(select).toHaveValue('fal-ai/flux/dev');
+  });
+
+  it('selecting a preset updates params.modelId', () => {
+    renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
+    const select = screen.getByRole('combobox');
+    fireEvent.change(select, { target: { value: 'fal-ai/flux-pro/v1.1-ultra' } });
+    expect(useFlowStore.getState().workflow.nodes[0]?.params.modelId).toBe('fal-ai/flux-pro/v1.1-ultra');
+  });
+
+  it('an unknown modelId value puts the select into custom mode with a free-text input showing that value', () => {
+    renderModelIdNode(falImageSpec, { modelId: 'fal-ai/some-other-model' });
+    const select = screen.getByRole('combobox');
+    expect(select).toHaveValue('__custom__');
+    expect(screen.getByDisplayValue('fal-ai/some-other-model')).toBeInTheDocument();
+  });
+
+  it('switching to "Tự nhập model id..." keeps the current value and shows a free-text input', () => {
+    renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
+    const select = screen.getByRole('combobox');
+    fireEvent.change(select, { target: { value: '__custom__' } });
+    expect(useFlowStore.getState().workflow.nodes[0]?.params.modelId).toBe('fal-ai/flux/dev');
+    expect(screen.getByDisplayValue('fal-ai/flux/dev')).toBeInTheDocument();
+  });
+
+  it('typing into the custom text input updates params.modelId', () => {
+    renderModelIdNode(falImageSpec, { modelId: 'fal-ai/some-other-model' });
+    const input = screen.getByDisplayValue('fal-ai/some-other-model');
+    fireEvent.change(input, { target: { value: 'fal-ai/brand-new-model' } });
+    expect(useFlowStore.getState().workflow.nodes[0]?.params.modelId).toBe('fal-ai/brand-new-model');
+  });
+
+  it('fal.video with an edge into its "image" input prioritizes i2v options within the tier', () => {
+    renderModelIdNode(falVideoSpec, { modelId: 'fal-ai/kling-video/t2v' }, [
+      { id: 'e1', from: { node: 'src', port: 'image' }, to: { node: 'n1', port: 'image' } },
+    ]);
+    const select = screen.getByRole('combobox');
+    const options = Array.from(select.querySelectorAll('option')).map((o) => o.value);
+    const i2vIndex = options.indexOf('fal-ai/kling-video/i2v');
+    const t2vIndex = options.indexOf('fal-ai/kling-video/t2v');
+    expect(i2vIndex).toBeGreaterThanOrEqual(0);
+    expect(t2vIndex).toBeGreaterThanOrEqual(0);
+    expect(i2vIndex).toBeLessThan(t2vIndex);
   });
 });

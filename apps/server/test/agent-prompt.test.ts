@@ -11,6 +11,7 @@ import {
   GENERATE_FEWSHOT_CAPTION_IMAGE,
   GENERATE_FEWSHOT_SCRIPT_VBEE,
 } from '../src/agent/promptBuilder.js';
+import { FAL_IMAGE_MODELS, FAL_VIDEO_MODELS } from '../src/catalog/falModels.js';
 import { createDefaultRegistry } from '../src/nodes/index.js';
 import { WorkflowSchema, validateWorkflow } from '../src/engine/schema.js';
 
@@ -76,6 +77,16 @@ describe('buildGenerateSystemPrompt', () => {
     expect(prompt).toContain(GENERATE_FEWSHOT_CAPTION_IMAGE.id);
     expect(prompt).toContain(GENERATE_FEWSHOT_SCRIPT_VBEE.id);
   });
+
+  // SPEC-step13.md §2/§4 — the "MODEL CATALOG (fal)" section + the
+  // tier-selection rule.
+  it('contains the MODEL CATALOG (fal) section with a xịn-tier id and the tier-selection rule', () => {
+    expect(prompt).toContain('MODEL CATALOG (fal)');
+    const xinModel = [...FAL_VIDEO_MODELS, ...FAL_IMAGE_MODELS].find((m) => m.tier === 'xin');
+    expect(xinModel).toBeDefined();
+    expect(prompt).toContain(xinModel!.id);
+    expect(prompt).toMatch(/mặc định chọn tier "kha"/);
+  });
 });
 
 describe('buildEditSystemPrompt', () => {
@@ -105,5 +116,10 @@ describe('buildEditSystemPrompt', () => {
   it('instructs the model to return ONLY a JSON array', () => {
     const prompt = buildEditSystemPrompt(registry, workflow, 'a');
     expect(prompt).toMatch(/JSON array|MẢNG/);
+  });
+
+  it('also contains the MODEL CATALOG (fal) section', () => {
+    const prompt = buildEditSystemPrompt(registry, workflow, 'a');
+    expect(prompt).toContain('MODEL CATALOG (fal)');
   });
 });

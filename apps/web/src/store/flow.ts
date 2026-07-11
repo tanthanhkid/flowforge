@@ -7,6 +7,7 @@ import { create } from 'zustand';
 import * as api from '../api/client.ts';
 import { ApiError } from '../api/client.ts';
 import type {
+  ModelCatalog,
   NodeRunRecord,
   NodeSpec,
   NodeState,
@@ -34,6 +35,8 @@ export interface FlowState {
   workflow: Workflow;
   selectedNodeId: string | null;
   registry: NodeSpec[];
+  /** SPEC-step13.md §3 — fal.image/fal.video model presets, fetched once alongside the registry. */
+  modelCatalog: ModelCatalog;
   runId?: string;
   runStatus?: RunStatus;
   nodeRuns: Record<string, NodeRunUiState>;
@@ -70,6 +73,8 @@ export interface FlowState {
   forceNodeIds: string[];
 
   loadRegistry(): Promise<void>;
+  /** See `modelCatalog` above. */
+  loadCatalog(): Promise<void>;
   newWorkflow(): void;
   loadWorkflow(id: string): Promise<void>;
   saveWorkflow(): Promise<void>;
@@ -178,6 +183,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   workflow: emptyWorkflow(),
   selectedNodeId: null,
   registry: [],
+  modelCatalog: { video: [], image: [] },
   runId: undefined,
   runStatus: undefined,
   nodeRuns: {},
@@ -191,6 +197,11 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   async loadRegistry() {
     const nodes = await api.getRegistry();
     set({ registry: nodes });
+  },
+
+  async loadCatalog() {
+    const modelCatalog = await api.getModelCatalog();
+    set({ modelCatalog });
   },
 
   newWorkflow() {

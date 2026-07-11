@@ -18,6 +18,7 @@ import { useFlowStore } from './store/flow.ts';
 
 function App() {
   const loadRegistry = useFlowStore((state) => state.loadRegistry);
+  const loadCatalog = useFlowStore((state) => state.loadCatalog);
   const rightTab = useFlowStore((state) => state.rightTab);
   const setRightTab = useFlowStore((state) => state.setRightTab);
   const [showWorkflowList, setShowWorkflowList] = useState(false);
@@ -28,7 +29,10 @@ function App() {
     loadRegistry().catch((err: unknown) => {
       console.error('Failed to load node registry', err);
     });
-  }, [loadRegistry]);
+    loadCatalog().catch((err: unknown) => {
+      console.error('Failed to load model catalog', err);
+    });
+  }, [loadRegistry, loadCatalog]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-slate-50 text-slate-900">
