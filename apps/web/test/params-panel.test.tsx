@@ -354,6 +354,33 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
     expect(t2vIndex).toBeGreaterThanOrEqual(0);
     expect(i2vIndex).toBeLessThan(t2vIndex);
   });
+
+  // SPEC-step17.md — real-money bug: a t2v model silently ignores a
+  // connected image and still bills. Warn inline in that exact case.
+  const imageEdge: Workflow['edges'] = [{ id: 'e1', from: { node: 'src', port: 'image' }, to: { node: 'n1', port: 'image' } }];
+
+  it('shows the t2v + image warning when a t2v preset is selected and an image is wired in', () => {
+    renderModelIdNode(falVideoSpec, { modelId: 'fal-ai/kling-video/t2v' }, imageEdge);
+    expect(screen.getByTestId('t2v-image-warning')).toHaveTextContent(
+      /Ảnh nối vào sẽ bị bỏ qua.*chọn model image-to-video/,
+    );
+    expect(screen.getByTestId('t2v-image-warning')).toHaveTextContent('fal-ai/kling-video/i2v');
+  });
+
+  it('does not show the warning for an i2v preset even with an image wired in', () => {
+    renderModelIdNode(falVideoSpec, { modelId: 'fal-ai/kling-video/i2v' }, imageEdge);
+    expect(screen.queryByTestId('t2v-image-warning')).not.toBeInTheDocument();
+  });
+
+  it('does not show the warning for a t2v preset when no image is wired in', () => {
+    renderModelIdNode(falVideoSpec, { modelId: 'fal-ai/kling-video/t2v' }, []);
+    expect(screen.queryByTestId('t2v-image-warning')).not.toBeInTheDocument();
+  });
+
+  it('does not show the warning for a custom (non-catalog) modelId even with an image wired in', () => {
+    renderModelIdNode(falVideoSpec, { modelId: 'fal-ai/some-custom-model' }, imageEdge);
+    expect(screen.queryByTestId('t2v-image-warning')).not.toBeInTheDocument();
+  });
 });
 
 // SPEC-step14.md §3/§4 — llm.generate/llm.transform's `model` param: same

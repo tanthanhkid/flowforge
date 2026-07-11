@@ -350,3 +350,122 @@ describe('fal.video node — execute() directly (mocked fetch)', () => {
     expect(media.meta).toEqual({ modelId, sourceUrl: resultVideoUrl });
   });
 });
+
+// SPEC-step17.md — guard against silently-billed text-to-video runs that
+// ignore a connected image input (real money wasted bug report).
+describe('fal.video node — t2v + image guard (SPEC-step17.md)', () => {
+  it('throws BEFORE calling fetch when the catalog modelId is a text-to-video preset and an image is connected', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+
+    await expect(
+      falVideoNode.execute({
+        inputs: { prompt: 'a cat', image },
+        params: { modelId: 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video' },
+        ctx,
+      }),
+    ).rejects.toThrow(/là text-to-video nên sẽ bỏ qua ảnh đầu vào/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('includes the same-family image-to-video suggestion when the catalog has one', async () => {
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+
+    await expect(
+      falVideoNode.execute({
+        inputs: { prompt: 'a cat', image },
+        params: { modelId: 'fal-ai/kling-video/v2.5-turbo/pro/text-to-video' },
+        ctx,
+      }),
+    ).rejects.toThrow('fal-ai/kling-video/v2.5-turbo/pro/image-to-video');
+  });
+
+  it('does not throw and does submit image_url for a catalog image-to-video model + image', async () => {
+    const modelId = 'fal-ai/kling-video/v2.5-turbo/pro/image-to-video';
+    const resultVideoUrl = 'https://cdn.fal.ai/files/i2v-result.mp4';
+    const videoBytes = new Uint8Array([1, 2, 3]);
+    let capturedSubmitBody: unknown;
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        capturedSubmitBody = JSON.parse(init?.body as string);
+        return jsonResponse(200, {
+          request_id: 'i2v-req',
+          status_url: 'https://queue.fal.run/i2v/status',
+          response_url: 'https://queue.fal.run/i2v/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/i2v/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/i2v/response') {
+        return jsonResponse(200, { video: { url: resultVideoUrl } });
+      }
+      if (url === resultVideoUrl) {
+        return binaryResponse(200, videoBytes, 'video/mp4');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const outputs = await falVideoNode.execute({
+      inputs: { prompt: 'a cat', image },
+      params: { modelId },
+      ctx,
+    });
+
+    expect((capturedSubmitBody as Record<string, unknown>).image_url).toBe('https://example.test/ref.png');
+    expect((outputs.video as MediaValue).kind).toBe('video');
+  });
+
+  it('does not throw for a custom (non-catalog) modelId + image — unchanged behavior', async () => {
+    const modelId = 'fal-ai/some-custom-video-model';
+    const resultVideoUrl = 'https://cdn.fal.ai/files/custom-result.mp4';
+    const videoBytes = new Uint8Array([4, 5, 6]);
+    let capturedSubmitBody: unknown;
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        capturedSubmitBody = JSON.parse(init?.body as string);
+        return jsonResponse(200, {
+          request_id: 'custom-req',
+          status_url: 'https://queue.fal.run/custom/status',
+          response_url: 'https://queue.fal.run/custom/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/custom/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/custom/response') {
+        return jsonResponse(200, { video: { url: resultVideoUrl } });
+      }
+      if (url === resultVideoUrl) {
+        return binaryResponse(200, videoBytes, 'video/mp4');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const outputs = await falVideoNode.execute({
+      inputs: { prompt: 'a cat', image },
+      params: { modelId },
+      ctx,
+    });
+
+    expect((capturedSubmitBody as Record<string, unknown>).image_url).toBe('https://example.test/ref.png');
+    expect((outputs.video as MediaValue).kind).toBe('video');
+  });
+});

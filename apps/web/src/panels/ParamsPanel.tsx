@@ -404,8 +404,27 @@ export function ParamsPanel() {
   // catalog select instead of a plain text input.
   const modelIdModels =
     node.type === 'fal.image' ? modelCatalog.image : node.type === 'fal.video' ? modelCatalog.video : undefined;
-  const preferI2V =
+  const hasImageEdge =
     node.type === 'fal.video' && workflow.edges.some((e) => e.to.node === node.id && e.to.port === 'image');
+  const preferI2V = hasImageEdge;
+
+  // SPEC-step17.md — fal.video: an image wired in but the selected preset is
+  // text-to-video means fal.ai will silently ignore that image (and still
+  // bill for the run). Warn inline with the same-family i2v suggestion when
+  // the catalog has one; custom (non-catalog) model ids can't be checked.
+  const t2vImageWarning = (() => {
+    if (!hasImageEdge || node.type !== 'fal.video' || !modelIdModels) return undefined;
+    const modelId = node.params.modelId;
+    const preset = modelIdModels.find((m) => m.id === modelId);
+    if (preset?.kind !== 'video-t2v') return undefined;
+    // Same-family sibling: t2v/i2v catalog pairs share every path segment
+    // except the last (SPEC-step17.md, mirrors server's findI2VSibling).
+    const prefix = String(modelId).split('/').slice(0, -1).join('/');
+    const sibling = modelIdModels.find(
+      (m) => m.kind === 'video-i2v' && m.id.split('/').slice(0, -1).join('/') === prefix,
+    );
+    return `⚠ Ảnh nối vào sẽ bị bỏ qua — chọn model image-to-video${sibling ? ` (vd ${sibling.id})` : ''}`;
+  })();
 
   // SPEC-step14.md §3 — llm.generate/llm.transform's `model` param gets the
   // same tiered select over the curated OpenRouter catalog, plus a leading
@@ -425,14 +444,20 @@ export function ParamsPanel() {
       <div className="flex flex-col gap-2">
         {Object.entries(properties).map(([name, schema]) =>
           name === 'modelId' && modelIdModels && modelIdModels.length > 0 ? (
-            <ModelIdField
-              key={name}
-              name={name}
-              value={node.params[name]}
-              models={modelIdModels}
-              preferI2V={preferI2V}
-              onApply={(value) => applyField(name, value)}
-            />
+            <div key={name} className="flex flex-col gap-1">
+              <ModelIdField
+                name={name}
+                value={node.params[name]}
+                models={modelIdModels}
+                preferI2V={preferI2V}
+                onApply={(value) => applyField(name, value)}
+              />
+              {t2vImageWarning && (
+                <span data-testid="t2v-image-warning" className="text-[10px] text-red-500">
+                  {t2vImageWarning}
+                </span>
+              )}
+            </div>
           ) : name === 'model' && llmModels && llmModels.length > 0 ? (
             <ModelIdField
               key={name}

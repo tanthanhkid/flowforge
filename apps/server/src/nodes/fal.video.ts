@@ -5,8 +5,22 @@
  */
 import { z } from 'zod';
 import { downloadBinary } from '../lib/http.js';
+import { FAL_VIDEO_MODELS } from '../catalog/falModels.js';
 import type { MediaValue, NodeDefinition } from '../engine/types.js';
 import { mediaToImageUrl, runFalQueue } from './providers/fal.js';
+
+/**
+ * Best-effort "same family" image-to-video suggestion for a text-to-video
+ * model id (SPEC-step17.md guard) — catalog t2v/i2v pairs share every path
+ * segment except the last (e.g. `.../pro/text-to-video` <->
+ * `.../pro/image-to-video`), so match on that shared prefix. Returns
+ * undefined when there's no such sibling in the catalog (nothing to
+ * suggest).
+ */
+function findI2VSibling(modelId: string): string | undefined {
+  const prefix = modelId.split('/').slice(0, -1).join('/');
+  return FAL_VIDEO_MODELS.find((m) => m.kind === 'video-i2v' && m.id.split('/').slice(0, -1).join('/') === prefix)?.id;
+}
 
 const ParamsSchema = z.object({
   modelId: z.string().min(1),
@@ -56,6 +70,19 @@ export const falVideoNode: NodeDefinition<Params> = {
 
     let imageUrl: string | undefined;
     if (inputs.image) {
+      // Guard BEFORE spending any fal.ai credit (SPEC-step17.md): a curated
+      // text-to-video model silently ignores image_url — catch it here, not
+      // after billing. Custom model ids not in the catalog are left alone
+      // (we genuinely can't know their kind).
+      const preset = FAL_VIDEO_MODELS.find((m) => m.id === params.modelId);
+      if (preset?.kind === 'video-t2v') {
+        const sibling = findI2VSibling(params.modelId);
+        throw new Error(
+          `Model "${params.modelId}" là text-to-video nên sẽ bỏ qua ảnh đầu vào. Chọn bản image-to-video` +
+            (sibling ? ` (vd ${sibling})` : '') +
+            ` hoặc ngắt kết nối ảnh.`,
+        );
+      }
       imageUrl = await mediaToImageUrl(inputs.image as MediaValue, ctx.artifactsDir);
     }
 
