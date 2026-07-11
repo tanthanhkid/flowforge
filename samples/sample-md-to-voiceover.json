@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "id": "sample-md-to-voiceover",
+  "name": "📝 Markdown brief → script + voiceover",
+  "nodes": [
+    {
+      "id": "brief",
+      "type": "input.markdown",
+      "params": { "path": "uploads/sample-brief-content.md" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "script",
+      "type": "llm.generate",
+      "params": {
+        "model": "",
+        "system": "Bạn là copywriter viết script quảng cáo audio tiếng Việt. Đọc brief thương hiệu (gồm giọng điệu và thông điệp chính) được cung cấp, viết 1 script quảng cáo dài 45-60 từ, đúng giọng điệu và truyền tải được thông điệp chính của brand. Chỉ trả về script, không giải thích thêm.",
+        "temperature": 0.8
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "voice",
+      "type": "vbee.tts",
+      "params": {
+        "voiceCode": "sg_female_thaotrinh_full_48k-fhg",
+        "speed": 1.0,
+        "format": "mp3"
+      },
+      "position": { "x": 600, "y": 0 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 900, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "brief", "port": "text" }, "to": { "node": "script", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "script", "port": "text" }, "to": { "node": "voice", "port": "text" } },
+    { "id": "e3", "from": { "node": "script", "port": "text" }, "to": { "node": "result", "port": "in1" } },
+    { "id": "e4", "from": { "node": "voice", "port": "audio" }, "to": { "node": "result", "port": "in2" } }
+  ]
+}

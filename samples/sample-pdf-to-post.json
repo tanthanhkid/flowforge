@@ -1,0 +1,55 @@
+{
+  "version": 1,
+  "id": "sample-pdf-to-post",
+  "name": "📄 PDF → Post Facebook",
+  "nodes": [
+    {
+      "id": "doc",
+      "type": "input.pdf",
+      "params": { "path": "uploads/sample-brief-flowforge.pdf" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "post",
+      "type": "llm.generate",
+      "params": {
+        "model": "",
+        "system": "Bạn là copywriter Facebook chuyên nghiệp. Đọc brief sản phẩm (tiếng Anh) được cung cấp và viết 1 post Facebook giới thiệu sản phẩm bằng TIẾNG VIỆT, có hook mở đầu thu hút, dùng emoji hợp lý, kết thúc bằng 3-5 hashtag liên quan. Chỉ trả về nội dung post, không giải thích thêm.",
+        "temperature": 0.85
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "img_prompt",
+      "type": "llm.transform",
+      "params": {
+        "instruction": "Từ post Facebook này, viết 1 image prompt bằng tiếng Anh (tối đa 40 từ) tả 1 bức ảnh minh hoạ phong cách illustration hiện đại, sạch, phù hợp làm ảnh đại diện cho sản phẩm công nghệ. KHÔNG chứa chữ/văn bản trong ảnh. Chỉ trả về prompt, không giải thích.",
+        "model": "",
+        "temperature": 0.4
+      },
+      "position": { "x": 600, "y": 0 }
+    },
+    {
+      "id": "image",
+      "type": "fal.image",
+      "params": {
+        "modelId": "fal-ai/flux/dev",
+        "imageSize": "landscape_16_9"
+      },
+      "position": { "x": 900, "y": 0 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 1200, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "doc", "port": "text" }, "to": { "node": "post", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "post", "port": "text" }, "to": { "node": "img_prompt", "port": "text" } },
+    { "id": "e3", "from": { "node": "img_prompt", "port": "text" }, "to": { "node": "image", "port": "prompt" } },
+    { "id": "e4", "from": { "node": "post", "port": "text" }, "to": { "node": "result", "port": "in1" } },
+    { "id": "e5", "from": { "node": "image", "port": "image" }, "to": { "node": "result", "port": "in2" } }
+  ]
+}

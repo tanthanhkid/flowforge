@@ -1,0 +1,40 @@
+{
+  "version": 1,
+  "id": "sample-stock-motion",
+  "name": "🌊 Ảnh stock chuyển động (image-to-video)",
+  "nodes": [
+    {
+      "id": "photo",
+      "type": "input.image",
+      "params": { "path": "uploads/sample-stock-landscape.jpg" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "motion",
+      "type": "input.text",
+      "params": { "value": "gentle camera pan, clouds drifting, water flowing, cinematic" },
+      "position": { "x": 0, "y": 200 }
+    },
+    {
+      "id": "video",
+      "type": "fal.video",
+      "params": {
+        "modelId": "fal-ai/kling-video/v2/master/image-to-video",
+        "duration": 5,
+        "aspectRatio": "16:9"
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 600, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "motion", "port": "text" }, "to": { "node": "video", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "photo", "port": "image" }, "to": { "node": "video", "port": "image" } },
+    { "id": "e3", "from": { "node": "video", "port": "video" }, "to": { "node": "result", "port": "in1" } }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "id": "sample-stock-restyle",
+  "name": "🎨 Biến ảnh stock thành ảnh nghệ thuật",
+  "nodes": [
+    {
+      "id": "photo",
+      "type": "input.image",
+      "params": { "path": "uploads/sample-stock-coffee.jpg" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "style",
+      "type": "input.text",
+      "params": { "value": "watercolor painting style, warm tones, artistic" },
+      "position": { "x": 0, "y": 200 }
+    },
+    {
+      "id": "image",
+      "type": "fal.image",
+      "params": {
+        "modelId": "fal-ai/flux/dev"
+      },
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "result",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 600, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "style", "port": "text" }, "to": { "node": "image", "port": "prompt" } },
+    { "id": "e2", "from": { "node": "photo", "port": "image" }, "to": { "node": "image", "port": "image" } },
+    { "id": "e3", "from": { "node": "image", "port": "image" }, "to": { "node": "result", "port": "in1" } }
+  ]
+}
