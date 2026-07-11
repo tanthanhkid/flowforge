@@ -13,6 +13,12 @@
  * whether extra `/`-separated segments or a %2F-encoded slash that
  * find-my-way decodes into one — reaches this handler's guard instead of
  * silently 404ing at the router level.
+ *
+ * SPEC-step10.md §1.1 nudges this open exactly one level: a path of the form
+ * `uploads/<file>` (files saved by `POST /api/upload`) is allowed through
+ * with `<file>` itself still fully guarded (no further `/`, `\`, or `..`) —
+ * every other shape (no `uploads/` prefix, or more than one extra segment)
+ * still hits the original all-or-nothing guard below.
  */
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -29,18 +35,30 @@ const CONTENT_TYPES: Record<string, string> = {
   mp4: 'video/mp4',
   webm: 'video/webm',
   mov: 'video/quicktime',
+  pdf: 'application/pdf',
+  md: 'text/markdown',
+  markdown: 'text/markdown',
+  txt: 'text/plain',
 };
+
+const UPLOADS_PREFIX = 'uploads/';
 
 export function registerArtifactsRoutes(app: FastifyInstance, artifactsDir: string): void {
   app.get('/artifacts/*', async (request, reply) => {
     const rest = (request.params as { '*': string })['*'] ?? '';
 
-    if (!rest || rest.includes('/') || rest.includes('\\') || rest.includes('..')) {
+    // `uploads/<file>`: only the segment after the prefix is checked below,
+    // so a traversal attempt smuggled in as e.g. `uploads/../secret` (target
+    // becomes `../secret`, which contains `..`) is still rejected.
+    const isUpload = rest.startsWith(UPLOADS_PREFIX);
+    const target = isUpload ? rest.slice(UPLOADS_PREFIX.length) : rest;
+
+    if (!target || target.includes('/') || target.includes('\\') || target.includes('..')) {
       reply.code(400).send({ error: 'Invalid artifact filename' });
       return;
     }
 
-    const filePath = path.join(artifactsDir, rest);
+    const filePath = isUpload ? path.join(artifactsDir, 'uploads', target) : path.join(artifactsDir, target);
 
     let data: Buffer;
     try {
@@ -50,13 +68,13 @@ export function registerArtifactsRoutes(app: FastifyInstance, artifactsDir: stri
       return;
     }
 
-    const ext = path.extname(rest).slice(1).toLowerCase();
+    const ext = path.extname(target).slice(1).toLowerCase();
     const contentType = CONTENT_TYPES[ext] ?? 'application/octet-stream';
     reply.header('Content-Type', contentType);
 
     const query = request.query as { download?: string };
     if (query.download === '1') {
-      reply.header('Content-Disposition', `attachment; filename="${rest}"`);
+      reply.header('Content-Disposition', `attachment; filename="${target}"`);
     }
 
     reply.send(data);

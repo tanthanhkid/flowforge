@@ -16,6 +16,7 @@ import type {
   RunStateEvent,
   RunSummary,
   SettingSummary,
+  UploadResult,
   ValidationIssue,
   Workflow,
   WorkflowSummary,
@@ -146,6 +147,32 @@ export async function putSettings(updates: Record<string, string>): Promise<Sett
     body: JSON.stringify(updates),
   });
   return res.settings;
+}
+
+// ---- upload (POST /api/upload, SPEC-step10.md §2) -----------------------
+
+/**
+ * Uploads a browser `File` via multipart/form-data — deliberately NOT routed
+ * through `request()` above, since that helper always sets
+ * `Content-Type: application/json`; a `FormData` body needs the browser to
+ * set its own `multipart/form-data; boundary=...` header instead.
+ */
+export async function uploadFile(file: File): Promise<UploadResult> {
+  const formData = new FormData();
+  formData.append('file', file);
+
+  const res = await fetch('/api/upload', { method: 'POST', body: formData });
+
+  const contentType = res.headers.get('content-type') ?? '';
+  const body: unknown = contentType.includes('application/json') ? await res.json() : await res.text();
+
+  if (!res.ok) {
+    const errorBody = isErrorBody(body) ? body : undefined;
+    const message = errorBody?.error ?? `Upload failed: ${res.status} ${res.statusText}`;
+    throw new ApiError(res.status, message);
+  }
+
+  return body as UploadResult;
 }
 
 // ---- SSE run events (GET /api/runs/:id/events) ---------------------------

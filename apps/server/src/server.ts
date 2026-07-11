@@ -6,6 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
+import multipart from '@fastify/multipart';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { findRepoRoot } from './config.js';
 import { openDb, SqliteCacheStore, SqliteRunStore } from './db/sqlite.js';
@@ -18,6 +19,7 @@ import { registerArtifactsRoutes } from './routes/artifacts.js';
 import { registerRegistryRoutes } from './routes/registry.js';
 import { registerRunsRoutes } from './routes/runs.js';
 import { registerSettingsRoutes } from './routes/settings.js';
+import { MAX_UPLOAD_BYTES, registerUploadRoutes } from './routes/upload.js';
 import { registerWorkflowsRoutes } from './routes/workflows.js';
 import { RunManager } from './runManager.js';
 
@@ -65,6 +67,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   const app = Fastify({ logger: opts.logger ?? false });
 
   await app.register(cors, { origin: true });
+  await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
 
   app.decorate('runManager', runManager);
 
@@ -91,6 +94,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   registerWorkflowsRoutes(app, { workflowsRepo, registry });
   registerRunsRoutes(app, { runManager, workflowsRepo, db });
   registerArtifactsRoutes(app, artifactsDir);
+  registerUploadRoutes(app, artifactsDir);
   registerAgentRoutes(app, { registry });
   registerSettingsRoutes(app, { envFilePath });
 

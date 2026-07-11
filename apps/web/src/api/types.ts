@@ -194,6 +194,20 @@ export interface EditNodeResult {
   attempts: number;
 }
 
+// ---- routes/upload.ts (POST /api/upload, SPEC-step10.md §1.1) -----------
+
+export type UploadKind = 'image' | 'pdf' | 'markdown' | 'video' | 'audio' | 'other';
+
+export interface UploadResult {
+  /** Relative to artifactsDir, e.g. "uploads/<uuid>.png" — drop straight into a node's `path` param. */
+  path: string;
+  /** Original filename as chosen by the user, for display only. */
+  filename: string;
+  mime: string;
+  size: number;
+  kind: UploadKind;
+}
+
 // ---- routes/settings.ts (GET/PUT /api/settings, SPEC-step6.md §1) -------
 
 export interface SettingSummary {

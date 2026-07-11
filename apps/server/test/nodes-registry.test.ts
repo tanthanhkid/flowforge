@@ -7,6 +7,9 @@ import { createDefaultRegistry } from '../src/nodes/index.js';
 const EXPECTED_TYPES = [
   'input.text',
   'input.file',
+  'input.image',
+  'input.pdf',
+  'input.markdown',
   'text.template',
   'output.collect',
   'llm.generate',
@@ -17,7 +20,7 @@ const EXPECTED_TYPES = [
 ];
 
 describe('createDefaultRegistry', () => {
-  it('registers exactly the 9 MVP node types', () => {
+  it('registers exactly the 12 node types (9 MVP + step10 input.image/pdf/markdown)', () => {
     const registry = createDefaultRegistry();
     const types = registry.list().map((def) => def.type).sort();
     expect(types).toEqual([...EXPECTED_TYPES].sort());

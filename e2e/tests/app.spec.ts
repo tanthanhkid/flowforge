@@ -4,6 +4,7 @@
  * Must pass 100% reliably, twice in a row.
  */
 import { mkdirSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
@@ -371,5 +372,56 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
     const downloadLink = page.getByTestId('result-download-link').first();
     await expect(downloadLink).toHaveAttribute('href', /\?download=1$/);
+  });
+
+  // SPEC-step10.md §3: a real browser upload (via the ParamsPanel's file
+  // chooser on an `input.markdown` node), not a fixture dropped straight
+  // into artifactsDir like test 11 — this exercises `POST /api/upload` end
+  // to end through the UI, zero-cost (input.markdown/text.template are pure
+  // utility nodes).
+  test('12. Markdown upload: choosing a local .md file uploads it, sets the node\'s path, and its content flows through to Kết quả', async ({
+    page,
+  }) => {
+    const mdContent = '# Xin chào từ upload e2e\n\nĐây là nội dung tải lên qua browser.';
+    const mdDir = path.join(os.tmpdir(), `ff-e2e-md-${crypto.randomUUID()}`);
+    mkdirSync(mdDir, { recursive: true });
+    const mdPath = path.join(mdDir, 'note.md');
+    writeFileSync(mdPath, mdContent, 'utf-8');
+
+    await page.goto('/');
+    const wf: WorkflowLike = {
+      version: 1,
+      id: crypto.randomUUID(),
+      name: `e2e markdown upload ${Date.now()}`,
+      nodes: [
+        { id: 'input_markdown_1', type: 'input.markdown', params: {}, position: { x: 40, y: 40 } },
+        { id: 'text_template_1', type: 'text.template', params: { template: '{{a}}' }, position: { x: 320, y: 40 } },
+        { id: 'output_collect_1', type: 'output.collect', params: {}, position: { x: 600, y: 40 } },
+      ],
+      edges: [
+        { id: 'e_1', from: { node: 'input_markdown_1', port: 'text' }, to: { node: 'text_template_1', port: 'a' } },
+        { id: 'e_2', from: { node: 'text_template_1', port: 'text' }, to: { node: 'output_collect_1', port: 'in1' } },
+      ],
+    };
+    await applyWorkflowViaJsonView(page, wf);
+
+    await page.locator('[data-testid="node-card"][data-node-id="input_markdown_1"]').click();
+    await page.getByTestId('upload-file-input').setInputFiles(mdPath);
+    await expect(page.getByText(/Đã chọn: note\.md/)).toBeVisible();
+
+    // The upload response's `path` landed in the node's params.
+    await page.getByTestId('json-view-btn').click();
+    await expect(page.getByTestId('json-view-textarea')).toContainText('uploads/');
+    await page.mouse.click(5, 5);
+
+    await page.getByTestId('save-btn').click();
+
+    const cards = page.getByTestId('node-card');
+    await runAndWaitForSuccess(page, cards, 'run-btn');
+
+    const resultsPanel = page.getByTestId('results-panel');
+    await expect(resultsPanel).toBeVisible();
+    await expect(resultsPanel).toContainText('Xin chào từ upload e2e');
+    await expect(resultsPanel).toContainText('Đây là nội dung tải lên qua browser.');
   });
 });

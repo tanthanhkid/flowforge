@@ -11,6 +11,7 @@ import {
   listWorkflows,
   openRunEvents,
   updateWorkflow,
+  uploadFile,
   validateWorkflow,
 } from '../src/api/client.ts';
 import type { Workflow } from '../src/api/types.ts';
@@ -132,6 +133,45 @@ describe('api client (CRUD + validate + runs)', () => {
 
     fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'Invalid workflow' }, 400));
     await expect(createWorkflow(sampleWorkflow)).rejects.toBeInstanceOf(ApiError);
+  });
+});
+
+// SPEC-step10.md §2 — uploadFile: POST /api/upload with a FormData body
+// (not the JSON `request()` helper other client fns use).
+describe('uploadFile', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  it('POSTs a FormData body containing the file under field "file"', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ path: 'uploads/a.png', filename: 'a.png', mime: 'image/png', size: 3, kind: 'image' }, 201),
+    );
+    const file = new File(['abc'], 'a.png', { type: 'image/png' });
+    const result = await uploadFile(file);
+
+    expect(result).toEqual({ path: 'uploads/a.png', filename: 'a.png', mime: 'image/png', size: 3, kind: 'image' });
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/upload');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeInstanceOf(FormData);
+    expect((init.body as FormData).get('file')).toBe(file);
+    // Unlike request(), no Content-Type header is set — the browser needs
+    // to add its own multipart boundary.
+    expect(init.headers).toBeUndefined();
+  });
+
+  it('throws ApiError with the server message on a non-2xx response', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'File vượt quá giới hạn 50MB.' }, 413));
+    const file = new File(['x'], 'big.png', { type: 'image/png' });
+    await expect(uploadFile(file)).rejects.toMatchObject({
+      name: 'ApiError',
+      status: 413,
+      message: 'File vượt quá giới hạn 50MB.',
+    });
   });
 });
 

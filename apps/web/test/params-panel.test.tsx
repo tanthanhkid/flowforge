@@ -1,5 +1,5 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NodeSpec, Workflow } from '../src/api/types.ts';
 import { ParamsPanel } from '../src/panels/ParamsPanel.tsx';
 import { useFlowStore } from '../src/store/flow.ts';
@@ -141,5 +141,112 @@ describe('ParamsPanel', () => {
     render(<ParamsPanel />);
     fireEvent.click(screen.getByText('Delete node'));
     expect(useFlowStore.getState().workflow.nodes).toHaveLength(0);
+  });
+});
+
+// SPEC-step10.md §2 — "📤 Chọn file..." upload button on the 3 new node
+// types (+ the pre-existing input.file). fetch is mocked directly (not the
+// api/client module) so the FormData construction itself is asserted, the
+// same style as api-client.test.ts.
+describe('ParamsPanel — file upload (SPEC-step10.md §2)', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  const imageSpec: NodeSpec = {
+    type: 'input.image',
+    category: 'utility',
+    title: 'Ảnh có sẵn',
+    inputs: {},
+    outputs: { image: { type: 'image' } },
+    paramsJsonSchema: { type: 'object', properties: { path: { type: 'string', minLength: 1 } } },
+  };
+
+  const markdownSpec: NodeSpec = {
+    type: 'input.markdown',
+    category: 'utility',
+    title: 'Markdown có sẵn',
+    inputs: {},
+    outputs: { text: { type: 'text' } },
+    paramsJsonSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', minLength: 1, description: 'chỉ dùng 1 trong "path" hoặc "content"' },
+        content: { type: 'string', minLength: 1, description: 'chỉ dùng 1 trong "path" hoặc "content"' },
+      },
+    },
+  };
+
+  function jsonResponse(body: unknown, status = 201): Response {
+    return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  beforeEach(() => {
+    fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+  });
+
+  function renderWithNode(spec: NodeSpec, params: Record<string, unknown> = {}): void {
+    resetStore({
+      version: 1,
+      id: 'wf1',
+      name: 'Test',
+      nodes: [{ id: 'n1', type: spec.type, params }],
+      edges: [],
+    });
+    useFlowStore.setState({ registry: [spec] });
+    render(<ParamsPanel />);
+  }
+
+  it('shows the upload button and file input with the image accept filter for input.image', () => {
+    renderWithNode(imageSpec);
+    expect(screen.getByTestId('upload-file-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('upload-file-input')).toHaveAttribute('accept', 'image/*');
+  });
+
+  it('uploads via FormData and sets params.path + shows the original filename on success', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ path: 'uploads/abc123.png', filename: 'my-pic.png', mime: 'image/png', size: 3, kind: 'image' }),
+    );
+    renderWithNode(imageSpec);
+
+    const file = new File(['abc'], 'my-pic.png', { type: 'image/png' });
+    const input = screen.getByTestId('upload-file-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByText(/Đã chọn: my-pic\.png/)).toBeInTheDocument());
+
+    expect(useFlowStore.getState().workflow.nodes[0]?.params.path).toBe('uploads/abc123.png');
+
+    const [url, init] = fetchMock.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe('/api/upload');
+    expect(init.method).toBe('POST');
+    expect(init.body).toBeInstanceOf(FormData);
+    expect((init.body as FormData).get('file')).toBe(file);
+
+    // The uploaded image becomes a thumbnail under /artifacts/<path>.
+    const thumb = screen.getByTestId('upload-image-thumb') as HTMLImageElement;
+    expect(thumb.src).toContain('/artifacts/uploads/abc123.png');
+  });
+
+  it('shows a red error message when the upload fails, and does not touch params.path', async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ error: 'File vượt quá giới hạn 50MB.' }, 413));
+    renderWithNode(imageSpec, { path: '' });
+
+    const file = new File(['x'.repeat(10)], 'big.png', { type: 'image/png' });
+    const input = screen.getByTestId('upload-file-input') as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+
+    await waitFor(() => expect(screen.getByTestId('upload-error')).toBeInTheDocument());
+    expect(screen.getByTestId('upload-error')).toHaveTextContent('File vượt quá giới hạn 50MB.');
+    expect(useFlowStore.getState().workflow.nodes[0]?.params.path).toBe('');
+  });
+
+  it('input.markdown renders both a path field and a big content textarea, with a "only one of the two" hint', () => {
+    renderWithNode(markdownSpec, { content: '' });
+    // Both fields' descriptions carry the "chỉ dùng 1 trong" hint (SPEC-step10.md §2).
+    expect(screen.getAllByText(/chỉ dùng 1 trong/).length).toBeGreaterThan(0);
+    // `content` is in TEXTAREA_FIELD_NAMES -> rendered as a <textarea>, not a single-line <input>.
+    expect(document.querySelector('textarea')).toBeInTheDocument();
+    expect(screen.getByTestId('upload-file-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('upload-file-input')).toHaveAttribute('accept', '.md,.markdown,.txt');
   });
 });

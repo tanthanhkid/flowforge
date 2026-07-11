@@ -8,6 +8,9 @@ import { NodeRegistry } from '../engine/registry.js';
 import { falImageNode } from './fal.image.js';
 import { falVideoNode } from './fal.video.js';
 import { inputFileNode } from './input.file.js';
+import { inputImageNode } from './input.image.js';
+import { inputMarkdownNode } from './input.markdown.js';
+import { inputPdfNode } from './input.pdf.js';
 import { inputTextNode } from './input.text.js';
 import { llmGenerateNode } from './llm.generate.js';
 import { llmTransformNode } from './llm.transform.js';
@@ -18,6 +21,9 @@ import { vbeeTtsNode } from './vbee.tts.js';
 export function registerAllNodes(registry: NodeRegistry): void {
   registry.register(inputTextNode);
   registry.register(inputFileNode);
+  registry.register(inputImageNode);
+  registry.register(inputPdfNode);
+  registry.register(inputMarkdownNode);
   registry.register(textTemplateNode);
   registry.register(outputCollectNode);
   registry.register(llmGenerateNode);
@@ -37,6 +43,9 @@ export {
   falImageNode,
   falVideoNode,
   inputFileNode,
+  inputImageNode,
+  inputMarkdownNode,
+  inputPdfNode,
   inputTextNode,
   llmGenerateNode,
   llmTransformNode,
