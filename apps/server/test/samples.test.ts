@@ -74,6 +74,13 @@ describe('samples/*.json', () => {
         const inputNodes = result.workflow.nodes.filter((n) => n.type === expectedInputType);
         expect(inputNodes.length).toBeGreaterThan(0);
       }
+
+      // sample-reels-voiceover (SPEC-step12.md §2): must ghép video+voiceover
+      // locally via video.compose rather than leaving them as separate outputs.
+      if (file === 'sample-reels-voiceover.json') {
+        const composeNodes = result.workflow.nodes.filter((n) => n.type === 'video.compose');
+        expect(composeNodes.length).toBe(1);
+      }
     });
   }
 });

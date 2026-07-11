@@ -1,7 +1,7 @@
 {
   "version": 1,
   "id": "sample-reels-voiceover",
-  "name": "🎬 Video Reels có thuyết minh (FB/TikTok)",
+  "name": "🎬 Video Reels hoàn chỉnh (script + voice + ghép)",
   "nodes": [
     {
       "id": "topic",
@@ -37,23 +37,35 @@
         "model": "",
         "temperature": 0.4
       },
-      "position": { "x": 600, "y": 170 }
+      "position": { "x": 600, "y": 200 }
     },
     {
       "id": "video",
       "type": "fal.video",
       "params": {
-        "modelId": "fal-ai/ltx-video",
+        "modelId": "fal-ai/kling-video/v1.6/standard/text-to-video",
         "duration": 5,
         "aspectRatio": "9:16"
       },
-      "position": { "x": 900, "y": 170 }
+      "position": { "x": 900, "y": 200 }
+    },
+    {
+      "id": "final",
+      "type": "video.compose",
+      "params": {
+        "width": 1080,
+        "height": 1920,
+        "fit": "cover",
+        "loopVideo": true,
+        "fps": 30
+      },
+      "position": { "x": 1200, "y": 100 }
     },
     {
       "id": "result",
       "type": "output.collect",
       "params": {},
-      "position": { "x": 1200, "y": 85 }
+      "position": { "x": 1500, "y": 100 }
     }
   ],
   "edges": [
@@ -61,8 +73,9 @@
     { "id": "e2", "from": { "node": "script", "port": "text" }, "to": { "node": "voice", "port": "text" } },
     { "id": "e3", "from": { "node": "script", "port": "text" }, "to": { "node": "vid_prompt", "port": "text" } },
     { "id": "e4", "from": { "node": "vid_prompt", "port": "text" }, "to": { "node": "video", "port": "prompt" } },
-    { "id": "e5", "from": { "node": "script", "port": "text" }, "to": { "node": "result", "port": "in1" } },
-    { "id": "e6", "from": { "node": "voice", "port": "audio" }, "to": { "node": "result", "port": "in2" } },
-    { "id": "e7", "from": { "node": "video", "port": "video" }, "to": { "node": "result", "port": "in3" } }
+    { "id": "e5", "from": { "node": "video", "port": "video" }, "to": { "node": "final", "port": "video" } },
+    { "id": "e6", "from": { "node": "voice", "port": "audio" }, "to": { "node": "final", "port": "audio" } },
+    { "id": "e7", "from": { "node": "script", "port": "text" }, "to": { "node": "result", "port": "in1" } },
+    { "id": "e8", "from": { "node": "final", "port": "video" }, "to": { "node": "result", "port": "in2" } }
   ]
 }

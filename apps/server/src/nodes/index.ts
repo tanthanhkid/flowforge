@@ -17,6 +17,7 @@ import { llmTransformNode } from './llm.transform.js';
 import { outputCollectNode } from './output.collect.js';
 import { textTemplateNode } from './text.template.js';
 import { vbeeTtsNode } from './vbee.tts.js';
+import { videoComposeNode } from './video.compose.js';
 
 export function registerAllNodes(registry: NodeRegistry): void {
   registry.register(inputTextNode);
@@ -31,6 +32,7 @@ export function registerAllNodes(registry: NodeRegistry): void {
   registry.register(falImageNode);
   registry.register(falVideoNode);
   registry.register(vbeeTtsNode);
+  registry.register(videoComposeNode);
 }
 
 export function createDefaultRegistry(): NodeRegistry {
@@ -52,4 +54,5 @@ export {
   outputCollectNode,
   textTemplateNode,
   vbeeTtsNode,
+  videoComposeNode,
 };
