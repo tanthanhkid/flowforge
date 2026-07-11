@@ -55,7 +55,7 @@ describe('NodeCard', () => {
     expect(document.querySelectorAll('.react-flow__handle')).toHaveLength(3);
   });
 
-  it("colors each port's Handle by its port type (spec §4 'port màu theo type')", () => {
+  it("colors each port's Handle *fill* by its port type (spec §4 'port màu theo type')", () => {
     renderNode({ node: workflowNode, spec, runState: undefined });
     // Both `prompt` and `context` (and `text`) are port type `text` in `spec`.
     const promptHandle = document.querySelector('[data-handleid="prompt"]');
@@ -65,7 +65,13 @@ describe('NodeCard', () => {
       expect(handle).not.toBeNull();
       const style = (handle as HTMLElement).style;
       expect(style.background).toBe(hexToRgb(PORT_COLORS.text));
-      expect(style.borderColor).toBe(hexToRgb(PORT_COLORS.text));
+      // SPEC-step18.md §6.2 (post-review fix): the border is always solid
+      // black, not the port's own color — a colored 2px border on a
+      // saturated port color reads at ~1.1:1 contrast against the
+      // cream/white card, the same low-contrast problem §6.2 requires a
+      // black outline to fix for edges (this dot is that edge's endpoint).
+      // The fill still carries the port-type color.
+      expect(style.borderColor).toBe(hexToRgb('#0D0D0D'));
       expect(style.borderStyle).toBe('solid');
     }
   });
@@ -82,6 +88,26 @@ describe('NodeCard', () => {
     expect(handle?.style.borderStyle).toBe('dashed');
     expect(handle?.style.background).toBe('transparent');
     expect(handle?.style.borderColor).toBe(hexToRgb(PORT_COLORS.any));
+  });
+
+  // SPEC-step18.md §5.3 (post-review fix): ports must protrude past the
+  // card's own outline ("nhô ra ngoài mép card") rather than sit fully
+  // inside it — the inline `left`/`right` override (React Flow's own
+  // `.react-flow__handle-left`/`-right` classes default to `left:0`/
+  // `right:0`, which lands the dot inside the row's own padding/border
+  // inset, not past the card's outer edge) is what makes that happen.
+  it('positions an input (left) Handle with a negative `left` so it protrudes past the card edge', () => {
+    renderNode({ node: workflowNode, spec, runState: undefined });
+    const handle = document.querySelector('[data-handleid="prompt"]') as HTMLElement | null;
+    expect(handle).not.toBeNull();
+    expect(Number.parseFloat(handle!.style.left)).toBeLessThan(0);
+  });
+
+  it('positions an output (right) Handle with a negative `right` so it protrudes past the card edge', () => {
+    renderNode({ node: workflowNode, spec, runState: undefined });
+    const handle = document.querySelector('[data-handleid="text"]') as HTMLElement | null;
+    expect(handle).not.toBeNull();
+    expect(Number.parseFloat(handle!.style.right)).toBeLessThan(0);
   });
 
   it('renders the node title and category badge', () => {

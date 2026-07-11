@@ -250,7 +250,9 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
       await anyIssue.click();
     }
 
-    const selectedCard = page.locator('[data-testid="node-card"].ring-2, [data-testid="node-card"][class*="ring-blue"]');
+    // SPEC-step18.md §5.3: selection is a thicker 4px black border
+    // (`border-[4px]`), not the old blue Tailwind `ring-*` treatment.
+    const selectedCard = page.locator('[data-testid="node-card"][class*="border-[4px]"]');
     await expect(selectedCard).toHaveCount(1);
   });
 
@@ -265,7 +267,12 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await page.getByTestId('palette-input.text').waitFor();
 
     await page.getByRole('button', { name: 'Workflows' }).click();
-    await page.getByRole('button', { name: wf.name }).click();
+    // `exact: true` (SPEC-step18.md §5.6's WorkflowList row): the row's own
+    // "✕" delete button carries `aria-label="Xoá ${wf.name}"`, whose
+    // accessible name contains `wf.name` as a substring — Playwright's
+    // default substring match on `getByRole(..., { name })` would otherwise
+    // resolve both buttons and fail with a strict-mode violation.
+    await page.getByRole('button', { name: wf.name, exact: true }).click();
 
     await expect(page.getByTestId('node-card')).toHaveCount(3);
   });

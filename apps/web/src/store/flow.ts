@@ -94,6 +94,28 @@ export interface FlowState {
    * rendered/measured yet) just fall back inside `layoutWorkflow`.
    */
   nodeSizes: Record<string, NodeSize>;
+  /**
+   * SPEC-step18.md §4 — bumped by `requestFitView()` (🪄 Sắp xếp toolbar
+   * button, and anything else that wants the canvas recentered). FlowCanvas
+   * watches this nonce and calls React Flow's `fitView({ padding: 0.15,
+   * duration: 300 })` whenever it changes; a plain counter (rather than a
+   * boolean) so two requests in a row without an intervening render both
+   * still trigger an effect re-run.
+   */
+  fitViewNonce: number;
+  /**
+   * SPEC-step18.md §5.1/§7.1 — whether Toolbar's "✨ Describe" popover is
+   * open. Lifted out of Toolbar's own local `useState` (post-review fix,
+   * major): the empty-canvas onboarding CTA (FlowCanvas) used to reach into
+   * Toolbar's private state by `document.querySelector('[data-testid=
+   * "describe-btn"]').click()` — a raw DOM click on a *toggle* button, so
+   * clicking the CTA while the user had already opened Describe from the
+   * Toolbar itself silently *closed* it instead of opening it. With the
+   * state here, the CTA can call `openDescribe()` (idempotent "make sure
+   * it's open") while Toolbar's own button keeps its toggle behavior via
+   * `toggleDescribe()`.
+   */
+  describeOpen: boolean;
 
   loadRegistry(): Promise<void>;
   /** See `modelCatalog` above. */
@@ -118,7 +140,46 @@ export interface FlowState {
    * when to surface `validationIssues`.
    */
   run(force?: string[]): Promise<boolean>;
-  openRun(runId: string): Promise<void>;
+  /**
+   * `opts.switchTab` defaults to `true` (spec §9 "auto-switch": both a
+   * RunsPanel click and a live run's onDone land on "Kết quả"). Pass
+   * `{ switchTab: false }` for a *background* load that must not yank the
+   * user off whatever right-panel tab they're currently looking at — see
+   * `ensureLatestRunLoaded` below (SPEC-step18.md §4/7.5).
+   */
+  openRun(runId: string, opts?: { switchTab?: boolean }): Promise<void>;
+  /**
+   * SPEC-step18.md §4/7.5 — root-cause fix for "tab Kết quả báo 'Chưa có run
+   * nào' dù DB có run": the store's `runId` only ever gets set by `run()` or
+   * `openRun()`, both of which require an explicit user/run action in *this*
+   * browser session. A fresh page load (or switching to a workflow that was
+   * last run in a previous session) leaves `runId` undefined even though the
+   * workflow has runs sitting in the DB — RunsPanel already fetches its own
+   * list independently and shows them, so the mismatch reads as a bug.
+   *
+   * Called by ResultsPanel on mount/workflow-change: if there's no live run
+   * yet, fetch this workflow's run history and `openRun` the most recent one
+   * (server already returns `ORDER BY created_at DESC` — see
+   * routes/runs.ts), WITHOUT switching `rightTab` (the user is already on
+   * "Kết quả" — RunsPanel driving this same call must not fight the user's
+   * own tab choice, spec §4 "KHÔNG tự chuyển tab"). No-op (silent) when
+   * there's already a live run, the workflow has no runs, or the fetch
+   * fails — ResultsPanel just keeps showing its placeholder in that case.
+   *
+   * Post-review fix (major): also a no-op when the latest run's own status
+   * is still `'running'`. `openRun()` only ever loads a static snapshot —
+   * it does NOT subscribe to SSE (only `run()`'s own call site does that) —
+   * so auto-loading a `running` row here would set `runStatus: 'running'`
+   * with nothing ever moving it out of that state. Toolbar's `isRunning`
+   * (`runStatus === 'running'`) gates both Run buttons, so this would
+   * permanently disable them the moment the user opens "Kết quả" on a
+   * workflow whose most recent run got orphaned (e.g. a dev-server restart
+   * mid-run — see apps/server/src/routes/runs.ts) or is genuinely still
+   * executing from elsewhere. Skipping it here just leaves the "Chưa có run
+   * nào" placeholder up, same as the "no runs at all" case — RunsPanel still
+   * lets the user open that run explicitly if they want to see it.
+   */
+  ensureLatestRunLoaded(): Promise<void>;
   /** Not from spec §3's action list verbatim — backs the Toolbar's Validate button (spec §4). */
   validate(): Promise<boolean>;
   /** See `costEstimate` above. Silent-fails (leaves the previous estimate in place) on any error. */
@@ -144,6 +205,14 @@ export interface FlowState {
    * successful ✨ generate.
    */
   autoLayout(): void;
+  /** See `fitViewNonce` above. */
+  requestFitView(): void;
+  /** See `describeOpen` above — Toolbar's own ✨ Describe button (flips open/closed). */
+  toggleDescribe(): void;
+  /** See `describeOpen` above — idempotent "make sure it's open" for the empty-canvas CTA. */
+  openDescribe(): void;
+  /** See `describeOpen` above — used by the popover's own ✕ and after a successful generate. */
+  closeDescribe(): void;
 }
 
 function emptyWorkflow(): Workflow {
@@ -231,6 +300,8 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   rightTab: 'params',
   scrollToNodeId: null,
   nodeSizes: {},
+  fitViewNonce: 0,
+  describeOpen: false,
 
   async loadRegistry() {
     const nodes = await api.getRegistry();
@@ -485,7 +556,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     return true;
   },
 
-  async openRun(runId) {
+  async openRun(runId, opts) {
     const snapshot = await api.getRun(runId);
     const nodeRuns: Record<string, NodeRunUiState> = {};
     for (const rec of snapshot.nodes) {
@@ -494,7 +565,37 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     // SPEC-step9.md §2 "auto-switch": this fires both when a *live* run
     // finishes (run()'s onDone refetches via openRun) and when the user
     // opens a past run from RunsPanel — both cases should land on Kết quả.
-    set({ runId, runStatus: snapshot.run.status, nodeRuns, rightTab: 'results' });
+    // `ensureLatestRunLoaded` (SPEC-step18.md §4) opts out via
+    // `switchTab: false` — it runs *because* the user is already on Kết quả.
+    set((state) => ({
+      runId,
+      runStatus: snapshot.run.status,
+      nodeRuns,
+      rightTab: opts?.switchTab === false ? state.rightTab : 'results',
+    }));
+  },
+
+  async ensureLatestRunLoaded() {
+    const state = get();
+    if (state.runId) return;
+    const workflowId = state.workflow.id;
+    try {
+      const runs = await api.listRuns({ workflowId, limit: 1 });
+      const latest = runs[0];
+      if (!latest) return;
+      // A `running` row can never resolve via this path (see the doc
+      // comment above) — leave it unloaded rather than bricking ▶ Run.
+      if (latest.status === 'running') return;
+      // Re-check after the await: the user may have started a live run, hit
+      // an older run in RunsPanel, or navigated to a different workflow
+      // while this fetch was in flight — any of those already set a `runId`
+      // (or changed `workflow.id`) that this stale lookup must not clobber.
+      if (get().runId || get().workflow.id !== workflowId) return;
+      await get().openRun(latest.id, { switchTab: false });
+    } catch {
+      // Silent fail (mirrors refreshEstimate above) — ResultsPanel just
+      // keeps showing its "Chưa có run nào" placeholder.
+    }
   },
 
   async validate() {
@@ -550,5 +651,21 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       workflow: layoutWorkflow(state.workflow, state.nodeSizes),
       dirty: true,
     }));
+  },
+
+  requestFitView() {
+    set((state) => ({ fitViewNonce: state.fitViewNonce + 1 }));
+  },
+
+  toggleDescribe() {
+    set((state) => ({ describeOpen: !state.describeOpen }));
+  },
+
+  openDescribe() {
+    set({ describeOpen: true });
+  },
+
+  closeDescribe() {
+    set({ describeOpen: false });
   },
 }));

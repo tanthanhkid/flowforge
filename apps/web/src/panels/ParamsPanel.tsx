@@ -25,12 +25,20 @@
  *                                         mapped to value '' (params.model
  *                                         '' already means "use
  *                                         OPENROUTER_DEFAULT_MODEL" server-side)
+ *
+ * SPEC-step18.md §5.5 styling: mono uppercase labels (>=11px per §2 — the
+ * mockup's 9.5px is a demo-only compromise, the spec's Vietnamese-text floor
+ * overrides it), 2px black-border fields with a pink (cat-video) focus ring,
+ * a hand-drawn checkbox (ink fill + accent ✓ when checked), and "Delete
+ * node" pulled 24px + a divider away from the rest (destructive action must
+ * not sit flush against routine ones — SPEC-step18.md §7 fix #7).
  */
 import { useEffect, useRef, useState } from 'react';
 import type { ChangeEvent } from 'react';
 import { uploadFile } from '../api/client.ts';
 import type { JsonSchemaProperty } from '../api/types.ts';
 import { useFlowStore } from '../store/flow.ts';
+import { Button } from '../ui/Button.tsx';
 
 const CUSTOM_MODEL_OPTION = '__custom__';
 
@@ -53,6 +61,19 @@ const TIER_GROUP_LABEL: Record<ModelTier, string> = {
 };
 
 const TIER_ORDER: ModelTier[] = ['xin', 'kha', 're'];
+
+// Shared field chrome (spec §5.5): 2px black border, 0 radius, pink focus
+// ring; a "_MONO" variant for technical/JSON content (--font-mono-data), and
+// an "_ERROR" variant (status-error border/ring) for invalid drafts.
+const LABEL_CLASS = 'block font-mono-data text-[11px] font-bold uppercase tracking-wide text-ink-soft';
+const FIELD_CLASS =
+  'w-full border-2 border-ink bg-paper px-2 py-1.5 text-xs text-ink focus:outline-none focus:border-cat-video focus:shadow-[2px_2px_0_var(--color-cat-video)]';
+const FIELD_ERROR_CLASS =
+  'w-full border-2 border-status-error bg-paper px-2 py-1.5 text-xs text-ink focus:outline-none focus:border-status-error focus:shadow-[2px_2px_0_var(--color-status-error)]';
+const FIELD_MONO_CLASS =
+  'w-full border-2 border-ink bg-paper px-2 py-1.5 font-mono-data text-[11px] text-ink focus:outline-none focus:border-cat-video focus:shadow-[2px_2px_0_var(--color-cat-video)]';
+const FIELD_MONO_ERROR_CLASS =
+  'w-full border-2 border-status-error bg-paper px-2 py-1.5 font-mono-data text-[11px] text-ink focus:outline-none focus:border-status-error focus:shadow-[2px_2px_0_var(--color-status-error)]';
 
 interface ModelIdFieldProps {
   name: string;
@@ -102,12 +123,8 @@ function ModelIdField({ name, value, models, preferI2V, defaultOption, onApply }
 
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-xs font-medium text-slate-600">{name}</span>
-      <select
-        className="rounded border border-slate-300 px-2 py-1 text-xs"
-        value={selectValue}
-        onChange={(event) => handleSelectChange(event.target.value)}
-      >
+      <span className={LABEL_CLASS}>{name}</span>
+      <select className={FIELD_CLASS} value={selectValue} onChange={(event) => handleSelectChange(event.target.value)}>
         {defaultOption && <option value={defaultOption.value}>{defaultOption.label}</option>}
         {TIER_ORDER.map((tier) => {
           const inTier = models
@@ -132,7 +149,7 @@ function ModelIdField({ name, value, models, preferI2V, defaultOption, onApply }
         <option value={CUSTOM_MODEL_OPTION}>✏️ Tự nhập model id...</option>
       </select>
       {matched && (
-        <span className="text-[10px] text-slate-400">
+        <span className="font-mono-data text-[11px] text-ink-soft">
           {matched.cost}
           {matched.note ? ` — ${matched.note}` : ''}
         </span>
@@ -140,7 +157,7 @@ function ModelIdField({ name, value, models, preferI2V, defaultOption, onApply }
       {showCustomInput && (
         <input
           type="text"
-          className="rounded border border-slate-300 px-2 py-1 text-xs"
+          className={FIELD_MONO_CLASS}
           value={stringValue}
           placeholder="fal-ai/..."
           onChange={(event) => onApply(event.target.value)}
@@ -184,9 +201,9 @@ interface FieldLabelProps {
 
 function FieldLabel({ name, schema }: FieldLabelProps) {
   return (
-    <span className="flex flex-col gap-0.5">
-      <span className="text-xs font-medium text-slate-600">{name}</span>
-      {schema.description && <span className="text-[10px] text-slate-400">{schema.description}</span>}
+    <span className="flex flex-col gap-1">
+      <span className={LABEL_CLASS}>{name}</span>
+      {schema.description && <span className="text-[11px] text-ink-soft">{schema.description}</span>}
     </span>
   );
 }
@@ -221,11 +238,7 @@ function ParamField({
     return (
       <label className="flex flex-col gap-1">
         <FieldLabel name={name} schema={schema} />
-        <select
-          className="rounded border border-slate-300 px-2 py-1 text-xs"
-          value={current}
-          onChange={(event) => onApply(event.target.value)}
-        >
+        <select className={FIELD_CLASS} value={current} onChange={(event) => onApply(event.target.value)}>
           {schema.enum.map((opt) => (
             <option key={String(opt)} value={String(opt)}>
               {String(opt)}
@@ -237,9 +250,30 @@ function ParamField({
   }
 
   if (schema.type === 'boolean') {
+    const checked = Boolean(value);
     return (
-      <label className="flex items-center gap-2">
-        <input type="checkbox" checked={Boolean(value)} onChange={(event) => onApply(event.target.checked)} />
+      <label className="flex cursor-pointer select-none items-center gap-2">
+        {/* Hand-drawn checkbox (spec §5.5): 16px square, ink border; checked
+            = ink fill + accent "✓" drawn on top. The real <input> covers the
+            whole box (appearance-none) so click/keyboard toggling and
+            `role="checkbox"` stay native — the checkmark span just overlays
+            it, `pointer-events-none` so clicks pass through. */}
+        <span className="relative inline-flex h-4 w-4 shrink-0 items-center justify-center border-2 border-ink bg-paper">
+          <input
+            type="checkbox"
+            checked={checked}
+            onChange={(event) => onApply(event.target.checked)}
+            className="absolute inset-0 h-full w-full cursor-pointer appearance-none"
+          />
+          {checked && (
+            <span
+              aria-hidden
+              className="pointer-events-none absolute inset-0 flex items-center justify-center bg-ink text-[11px] font-bold leading-none text-accent"
+            >
+              ✓
+            </span>
+          )}
+        </span>
         <FieldLabel name={name} schema={schema} />
       </label>
     );
@@ -252,13 +286,13 @@ function ParamField({
         <FieldLabel name={name} schema={schema} />
         <input
           type="number"
-          className={`rounded border px-2 py-1 text-xs ${numberError ? 'border-red-500' : 'border-slate-300'}`}
+          className={numberError ? FIELD_ERROR_CLASS : FIELD_CLASS}
           value={displayValue}
           min={schema.minimum ?? schema.exclusiveMinimum}
           max={schema.maximum ?? schema.exclusiveMaximum}
           onChange={(event) => onNumberChange(event.target.value)}
         />
-        {numberError && <span className="text-[10px] text-red-500">Out of range</span>}
+        {numberError && <span className="font-mono-data text-[11px] text-status-error">Out of range</span>}
       </label>
     );
   }
@@ -270,11 +304,11 @@ function ParamField({
         <FieldLabel name={name} schema={schema} />
         <textarea
           rows={3}
-          className={`rounded border px-2 py-1 font-mono text-[11px] ${jsonError ? 'border-red-500' : 'border-slate-300'}`}
+          className={jsonError ? FIELD_MONO_ERROR_CLASS : FIELD_MONO_CLASS}
           value={displayValue}
           onChange={(event) => onJsonChange(event.target.value)}
         />
-        {jsonError && <span className="text-[10px] text-red-500">Invalid JSON</span>}
+        {jsonError && <span className="font-mono-data text-[11px] text-status-error">Invalid JSON</span>}
       </label>
     );
   }
@@ -284,12 +318,7 @@ function ParamField({
     return (
       <label className="flex flex-col gap-1">
         <FieldLabel name={name} schema={schema} />
-        <textarea
-          rows={4}
-          className="rounded border border-slate-300 px-2 py-1 text-xs"
-          value={stringValue}
-          onChange={(event) => onApply(event.target.value)}
-        />
+        <textarea rows={4} className={FIELD_CLASS} value={stringValue} onChange={(event) => onApply(event.target.value)} />
       </label>
     );
   }
@@ -297,12 +326,7 @@ function ParamField({
   return (
     <label className="flex flex-col gap-1">
       <FieldLabel name={name} schema={schema} />
-      <input
-        type="text"
-        className="rounded border border-slate-300 px-2 py-1 text-xs"
-        value={stringValue}
-        onChange={(event) => onApply(event.target.value)}
-      />
+      <input type="text" className={FIELD_CLASS} value={stringValue} onChange={(event) => onApply(event.target.value)} />
     </label>
   );
 }
@@ -342,7 +366,7 @@ export function ParamsPanel() {
   }, [selectedNodeId]);
 
   if (!node) {
-    return <div className="p-3 text-xs text-slate-400">Chọn một node trên canvas để xem/sửa params.</div>;
+    return <div className="p-4 text-xs text-ink-soft">Chọn một node trên canvas để xem/sửa params.</div>;
   }
 
   const properties = spec?.paramsJsonSchema.properties ?? {};
@@ -434,14 +458,14 @@ export function ParamsPanel() {
   const llmModels = isLlmModelField ? modelCatalog.llm : undefined;
 
   return (
-    <div className="flex flex-col gap-3 p-3 text-sm">
-      <div>
-        <h2 className="text-sm font-semibold">{spec?.title ?? node.type}</h2>
-        <p className="text-[10px] text-slate-400">{node.id}</p>
-        {spec?.description && <p className="mt-1 text-xs text-slate-500">{spec.description}</p>}
+    <div className="flex flex-col gap-4 p-3 text-sm text-ink">
+      <div className="border-b-2 border-ink pb-3">
+        <h2 className="font-display text-sm uppercase leading-tight text-ink">{spec?.title ?? node.type}</h2>
+        <p className="mt-1 font-mono-data text-[11px] text-ink-soft">{node.id}</p>
+        {spec?.description && <p className="mt-1.5 text-xs text-ink-soft">{spec.description}</p>}
       </div>
 
-      <div className="flex flex-col gap-2">
+      <div className="flex flex-col gap-3">
         {Object.entries(properties).map(([name, schema]) =>
           name === 'modelId' && modelIdModels && modelIdModels.length > 0 ? (
             <div key={name} className="flex flex-col gap-1">
@@ -453,7 +477,7 @@ export function ParamsPanel() {
                 onApply={(value) => applyField(name, value)}
               />
               {t2vImageWarning && (
-                <span data-testid="t2v-image-warning" className="text-[10px] text-red-500">
+                <span data-testid="t2v-image-warning" className="text-[11px] font-medium text-status-error">
                   {t2vImageWarning}
                 </span>
               )}
@@ -483,19 +507,20 @@ export function ParamsPanel() {
             />
           ),
         )}
-        {Object.keys(properties).length === 0 && <p className="text-xs text-slate-400">Node này không có params.</p>}
+        {Object.keys(properties).length === 0 && <p className="text-xs text-ink-soft">Node này không có params.</p>}
       </div>
 
       {canUpload && (
-        <div className="flex flex-col gap-1 border-t border-slate-200 pt-2">
-          <button
+        <div className="flex flex-col gap-2 border-t-2 border-ink pt-3">
+          <Button
             type="button"
+            variant="secondary"
             data-testid="upload-file-btn"
             onClick={() => fileInputRef.current?.click()}
-            className="w-fit rounded border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-50"
+            className="w-fit"
           >
             📤 Chọn file...
-          </button>
+          </Button>
           <input
             ref={fileInputRef}
             type="file"
@@ -504,43 +529,38 @@ export function ParamsPanel() {
             className="hidden"
             onChange={handleFileChange}
           />
-          {uploading && <span className="text-[10px] text-slate-400">Đang tải lên...</span>}
+          {uploading && <span className="font-mono-data text-[11px] text-ink-soft">Đang tải lên...</span>}
           {uploadError && (
-            <span data-testid="upload-error" className="text-[10px] text-red-500">
+            <span data-testid="upload-error" className="text-[11px] text-status-error">
               {uploadError}
             </span>
           )}
           {uploadFilename && !uploadError && (
-            <span className="text-[10px] text-slate-500">Đã chọn: {uploadFilename}</span>
+            <span className="text-[11px] text-ink-soft">Đã chọn: {uploadFilename}</span>
           )}
           {showImageThumb && (
             <img
               src={`/artifacts/${currentPath}`}
               alt="preview"
               data-testid="upload-image-thumb"
-              className="max-h-24 w-fit rounded border border-slate-200 object-contain"
+              className="max-h-24 w-fit border-2 border-ink object-contain"
             />
           )}
         </div>
       )}
 
-      <div className="mt-2 flex flex-col gap-2 border-t border-slate-200 pt-2">
-        <button
-          type="button"
-          onClick={() => toggleForceNode(node.id)}
-          className={`rounded border px-2 py-1 text-xs ${
-            isForced ? 'border-amber-500 bg-amber-50 text-amber-700' : 'border-slate-300 text-slate-600 hover:bg-slate-50'
-          }`}
-        >
+      <div className="flex flex-col gap-2 border-t-2 border-ink pt-3">
+        <Button type="button" variant={isForced ? 'primary' : 'secondary'} onClick={() => toggleForceNode(node.id)} className="w-fit">
           {isForced ? '⚡ Sẽ force re-run ở lần Run kế tiếp' : 'Force re-run node này'}
-        </button>
-        <button
-          type="button"
-          onClick={() => removeNode(node.id)}
-          className="rounded border border-red-300 px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-        >
+        </Button>
+      </div>
+
+      {/* Destructive action: pulled 24px away + its own dashed divider so it
+          never sits flush against routine actions above (SPEC-step18.md §7 fix #7). */}
+      <div className="mt-6 flex flex-col gap-2 border-t-2 border-dashed border-ink pt-4">
+        <Button type="button" variant="danger" onClick={() => removeNode(node.id)} className="w-fit">
           Delete node
-        </button>
+        </Button>
       </div>
     </div>
   );

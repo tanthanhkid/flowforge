@@ -15,7 +15,15 @@
  * a monospace scroll box + Copy button, which lives in ResultsPanel itself)
  * but is reused for the collapsed "Tất cả node" listing and for full-size
  * media rendering.
+ *
+ * Neo-brutalist pass (SPEC-step18.md §5.6): media (image/video/non-compact
+ * audio) gets a black-bordered "polaroid" frame — a thin 2px frame in
+ * `compact` mode so NodeCard's fixed 300px box never grows, a thicker 4px
+ * frame with a hard shadow when `compact={false}` (ResultsPanel's full-size
+ * use). Everything else swaps hand-rolled slate/red utility colors for the
+ * shared design tokens (ink/ink-soft/status-error, mono-data font).
  */
+import type { ReactNode } from 'react';
 import type { MediaValue, PortValue } from '../api/types.ts';
 
 export function basename(path: string): string {
@@ -47,6 +55,21 @@ function formatAudioLabel(value: MediaValue): string {
   return '🔊 audio';
 }
 
+/** Black-bordered "polaroid" media frame (spec §5.6) — thin in compact mode so it never widens a 300px NodeCard. */
+function PolaroidFrame({ compact, children }: { compact: boolean; children: ReactNode }) {
+  return (
+    <div
+      className={
+        compact
+          ? 'inline-block max-w-full border-2 border-ink bg-paper p-0.5'
+          : 'inline-block w-full border-4 border-ink bg-paper p-1.5 shadow-hard-3'
+      }
+    >
+      {children}
+    </div>
+  );
+}
+
 export interface PreviewProps {
   value: PortValue;
   /** Sizing only — see module doc. Defaults to true (NodeCard's inline use). */
@@ -59,34 +82,46 @@ export function Preview({ value, compact = true }: PreviewProps) {
   if (isMediaValue(value)) {
     const src = mediaSrc(value);
     if (!src) {
-      return <p className="text-[10px] text-red-500">{value.kind}: missing path/url</p>;
+      return (
+        <p className="text-[11px] font-bold text-status-error">
+          {value.kind}: missing path/url
+        </p>
+      );
     }
     if (value.kind === 'image') {
       return (
-        <img
-          src={src}
-          alt=""
-          className={compact ? 'max-h-20 max-w-full rounded object-contain' : 'w-full rounded object-contain'}
-        />
+        <PolaroidFrame compact={compact}>
+          <img
+            src={src}
+            alt=""
+            className={compact ? 'max-h-20 max-w-full object-contain' : 'w-full object-contain'}
+          />
+        </PolaroidFrame>
       );
     }
     if (value.kind === 'video') {
       return (
-        <video src={src} controls className={compact ? 'max-h-20 max-w-full rounded' : 'w-full rounded'} />
+        <PolaroidFrame compact={compact}>
+          <video src={src} controls className={compact ? 'max-h-20 max-w-full' : 'w-full'} />
+        </PolaroidFrame>
       );
     }
     // audio: compact mode skips the <audio> player entirely (spec §1 —
     // "audio chỉ hiện icon 🔊 + duration") to keep the node's height bounded.
     if (compact) {
-      return <span className="text-[10px] text-slate-500">{formatAudioLabel(value)}</span>;
+      return <span className="font-mono-data text-[11px] font-bold text-ink-soft">{formatAudioLabel(value)}</span>;
     }
-    return <audio src={src} controls className="w-full" />;
+    return (
+      <PolaroidFrame compact={compact}>
+        <audio src={src} controls className="w-full" />
+      </PolaroidFrame>
+    );
   }
 
   if (typeof value === 'string') {
     return (
       <p
-        className={`whitespace-pre-wrap break-all text-xs ${compact ? 'line-clamp-1 overflow-hidden' : 'line-clamp-5'}`}
+        className={`whitespace-pre-wrap break-all text-[11px] text-ink ${compact ? 'line-clamp-1 overflow-hidden' : 'line-clamp-5'}`}
       >
         {value}
       </p>
@@ -94,12 +129,14 @@ export function Preview({ value, compact = true }: PreviewProps) {
   }
 
   if (typeof value === 'number' || typeof value === 'boolean') {
-    return <span className="text-xs">{String(value)}</span>;
+    return <span className="font-mono-data text-[11px] text-ink">{String(value)}</span>;
   }
 
   if (Array.isArray(value)) {
     return (
-      <pre className={`overflow-auto whitespace-pre-wrap break-words text-[10px] ${compact ? 'max-h-16' : 'max-h-64'}`}>
+      <pre
+        className={`overflow-auto whitespace-pre-wrap break-words border-2 border-ink bg-bg p-1 font-mono-data text-[10px] text-ink ${compact ? 'max-h-16' : 'max-h-64'}`}
+      >
         {JSON.stringify(value, null, 2)}
       </pre>
     );
@@ -111,7 +148,7 @@ export function Preview({ value, compact = true }: PreviewProps) {
       <div className="flex flex-col gap-1">
         {entries.map(([key, v]) => (
           <div key={key} className="flex flex-col gap-0.5">
-            <span className="font-mono text-[10px] text-slate-400">{key}</span>
+            <span className="font-mono-data text-[10px] text-ink-soft">{key}</span>
             <Preview value={v} compact={compact} />
           </div>
         ))}
@@ -119,5 +156,5 @@ export function Preview({ value, compact = true }: PreviewProps) {
     );
   }
 
-  return <pre className="text-[10px]">{JSON.stringify(value)}</pre>;
+  return <pre className="text-[10px] text-ink">{JSON.stringify(value)}</pre>;
 }

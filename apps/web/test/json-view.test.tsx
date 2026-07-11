@@ -66,7 +66,7 @@ describe('JsonView', () => {
       expect(useFlowStore.getState().workflow.name).toBe('Renamed');
     });
     expect(useFlowStore.getState().dirty).toBe(true);
-    expect(textarea.className).not.toMatch(/border-red-500/);
+    expect(textarea.className).not.toMatch(/border-status-error/);
   });
 
   it('Apply with broken JSON shows an inline error and leaves the store untouched', async () => {
@@ -77,8 +77,8 @@ describe('JsonView', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
 
     await waitFor(() => {
-      expect(textarea.className).toMatch(/border-red-500/);
-      expect(document.querySelector('p.text-red-600')).not.toBeNull();
+      expect(textarea.className).toMatch(/border-status-error/);
+      expect(document.querySelector('[data-testid="json-view-error"]')).not.toBeNull();
     });
     expect(useFlowStore.getState().workflow).toEqual(baseWorkflow);
     expect(useFlowStore.getState().dirty).toBe(false);

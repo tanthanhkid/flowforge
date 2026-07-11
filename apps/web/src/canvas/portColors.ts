@@ -6,13 +6,13 @@
 import type { PortType } from '../api/types.ts';
 
 export const PORT_COLORS: Record<PortType, string> = {
-  text: '#3b82f6',
-  image: '#22c55e',
-  video: '#a855f7',
-  audio: '#f97316',
-  json: '#94a3b8',
-  number: '#14b8a6',
-  any: '#e5e7eb',
+  text: '#3B5FFF',
+  image: '#B6FF3B',
+  video: '#FF4FA3',
+  audio: '#FF6B1A',
+  json: '#8B5CF6',
+  number: '#00D9C0',
+  any: '#0D0D0D',
 };
 
 /** `any` renders with a dashed outline (spec §4) rather than a solid one. */

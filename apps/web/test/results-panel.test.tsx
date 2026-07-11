@@ -158,6 +158,32 @@ describe('ResultsPanel', () => {
     expect(screen.getByTestId('results-panel')).toHaveTextContent('hello');
   });
 
+  // SPEC-step18.md §4/7.5 — root-cause fix for "tab Kết quả báo 'Chưa có run
+  // nào' dù DB có run": mounting without a live run must ask the store to
+  // backfill the workflow's latest one, reusing openRun's own logic.
+  it('calls store.ensureLatestRunLoaded on mount when there is no live run', () => {
+    const ensureLatestRunLoaded = vi.fn().mockResolvedValue(undefined);
+    useFlowStore.setState({ ensureLatestRunLoaded });
+
+    render(<ResultsPanel />);
+
+    expect(ensureLatestRunLoaded).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call store.ensureLatestRunLoaded when a live run is already loaded', () => {
+    const ensureLatestRunLoaded = vi.fn().mockResolvedValue(undefined);
+    useFlowStore.setState({
+      ensureLatestRunLoaded,
+      runId: 'run1',
+      runStatus: 'success',
+      nodeRuns: { input_1: { state: 'success', logs: [], outputs: { text: 'xin chào' } } },
+    });
+
+    render(<ResultsPanel />);
+
+    expect(ensureLatestRunLoaded).not.toHaveBeenCalled();
+  });
+
   it('lists every success node (compact) in the collapsed "Tất cả node" section', () => {
     useFlowStore.setState({
       runId: 'run1',

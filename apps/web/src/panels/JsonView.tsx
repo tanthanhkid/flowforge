@@ -14,11 +14,21 @@
  * not blocking — the apply already happened).
  *
  * Reset: discards the draft and re-serializes the store's current workflow.
+ *
+ * Neo-brutalist pass (SPEC-step18.md §5.6): shares `ui/Modal.tsx` for the
+ * shell. `ui/Modal.tsx`'s title is hardcoded `text-ink` (black), so a black
+ * `headerColor` would render an invisible black-on-black title — instead
+ * the Modal keeps its default accent header (readable) and a separate
+ * "terminal" strip right above the textarea supplies the spec's "header
+ * đen" console feel. The textarea itself is the deliberate dark spot
+ * ("phòng máy") — `#0D0D0D` background, lime-on-black mono text.
  */
 import { useEffect, useState } from 'react';
 import * as api from '../api/client.ts';
 import type { ValidationIssue, Workflow } from '../api/types.ts';
 import { useFlowStore } from '../store/flow.ts';
+import { Button } from '../ui/Button.tsx';
+import { Modal } from '../ui/Modal.tsx';
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Unexpected error';
@@ -100,16 +110,17 @@ export function JsonView({ onClose }: JsonViewProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/30" onClick={onClose}>
-      <div
-        className="flex max-h-[85vh] w-[720px] flex-col rounded bg-white p-4 shadow-xl"
-        onClick={(event) => event.stopPropagation()}
-      >
-        <div className="mb-2 flex items-center justify-between">
-          <h2 className="text-sm font-semibold">{'{} JSON view'}</h2>
-          <button type="button" onClick={onClose} className="text-xs text-slate-400 hover:text-slate-600">
-            ✕
-          </button>
+    <Modal
+      title="{} JSON view"
+      onClose={onClose}
+      className="h-[85vh] w-[720px]! max-w-[92vw]!"
+      data-testid="json-view-modal"
+    >
+      <div className="flex h-full flex-col gap-2">
+        <div className="flex shrink-0 items-center border-2 border-ink bg-ink px-2.5 py-1.5">
+          <span className="truncate font-mono-data text-[11px] font-bold text-status-success">
+            $ workflow.json — sửa trực tiếp rồi bấm Apply để cập nhật canvas
+          </span>
         </div>
 
         <textarea
@@ -118,46 +129,40 @@ export function JsonView({ onClose }: JsonViewProps) {
           value={draft}
           onChange={(event) => handleChange(event.target.value)}
           spellCheck={false}
-          className={`min-h-[50vh] flex-1 resize-none rounded border p-2 font-mono text-xs ${
-            parseError ? 'border-red-500' : 'border-slate-300'
+          className={`min-h-[45vh] flex-1 resize-none border-2 bg-[#0D0D0D] p-2 font-mono-data text-[11px] text-[#B6FF3B] caret-[#B6FF3B] focus:outline-none ${
+            parseError ? 'border-status-error' : 'border-ink'
           }`}
         />
 
         {parseError && (
-          <p data-testid="json-view-error" className="mt-1 text-xs text-red-600">
+          <p data-testid="json-view-error" className="shrink-0 text-[11px] font-bold text-status-error">
             {parseError}
           </p>
         )}
 
         {issues.length > 0 && (
-          <ul className="mt-2 flex max-h-24 flex-col gap-1 overflow-y-auto">
+          <ul className="flex max-h-24 shrink-0 flex-col gap-1 overflow-y-auto border-2 border-ink bg-bg p-1.5">
             {issues.map((issue, i) => (
-              <li key={`${issue.code}-${i}`} className="text-xs text-amber-600">
-                [{issue.code}] {issue.message}
+              <li
+                key={`${issue.code}-${i}`}
+                className="border-l-4 pl-1.5 font-mono-data text-[11px] font-bold text-ink"
+                style={{ borderColor: 'var(--color-status-running)' }}
+              >
+                ⚠ [{issue.code}] {issue.message}
               </li>
             ))}
           </ul>
         )}
 
-        <div className="mt-2 flex items-center gap-2">
-          <button
-            type="button"
-            data-testid="json-view-apply"
-            onClick={() => void handleApply()}
-            disabled={validating}
-            className="rounded bg-blue-600 px-3 py-1 text-xs font-medium text-white disabled:opacity-50"
-          >
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="primary" data-testid="json-view-apply" onClick={() => void handleApply()} disabled={validating}>
             {validating ? 'Applying…' : 'Apply'}
-          </button>
-          <button
-            type="button"
-            onClick={handleReset}
-            className="rounded border border-slate-300 px-3 py-1 text-xs hover:bg-slate-50"
-          >
+          </Button>
+          <Button variant="secondary" onClick={handleReset}>
             Reset
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
+    </Modal>
   );
 }

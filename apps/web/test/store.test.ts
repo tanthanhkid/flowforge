@@ -314,6 +314,90 @@ describe('openRun', () => {
 
     expect(useFlowStore.getState().rightTab).toBe('results');
   });
+
+  // SPEC-step18.md §4/7.5 — `openRun(id, { switchTab: false })` is what
+  // `ensureLatestRunLoaded` (below) uses to load a run's data into the store
+  // without yanking the user off whatever right-panel tab they're already on.
+  it('with { switchTab: false } loads the run but leaves rightTab untouched', async () => {
+    useFlowStore.setState({ rightTab: 'results' });
+    const snapshot: RunSnapshot = {
+      run: { id: 'run5', workflowId: 'wf1', workflowJson: '{}', status: 'success', createdAt: 0, finishedAt: 1 },
+      nodes: [],
+    };
+    vi.mocked(api.getRun).mockResolvedValue(snapshot);
+
+    await useFlowStore.getState().openRun('run5', { switchTab: false });
+
+    expect(useFlowStore.getState().runId).toBe('run5');
+    expect(useFlowStore.getState().rightTab).toBe('results');
+  });
+});
+
+// SPEC-step18.md §4/7.5 — root-cause fix for "tab Kết quả báo 'Chưa có run
+// nào' dù DB có run": ResultsPanel calls this on mount when there's no live
+// run yet; it should transparently backfill the workflow's most recent run.
+describe('ensureLatestRunLoaded (SPEC-step18.md §4/7.5)', () => {
+  it('loads the most recent run for the current workflow without switching tabs', async () => {
+    useFlowStore.setState({ runId: undefined, rightTab: 'results' });
+    vi.mocked(api.listRuns).mockResolvedValue([
+      { id: 'run9', workflowId: 'wf1', status: 'success', createdAt: 200 },
+      { id: 'run8', workflowId: 'wf1', status: 'success', createdAt: 100 },
+    ]);
+    vi.mocked(api.getRun).mockResolvedValue({
+      run: { id: 'run9', workflowId: 'wf1', workflowJson: '{}', status: 'success', createdAt: 200, finishedAt: 201 },
+      nodes: [{ runId: 'run9', nodeId: 'n1', state: 'success', outputs: { text: 'hi' }, logs: [], cacheHit: false }],
+    });
+
+    await useFlowStore.getState().ensureLatestRunLoaded();
+
+    expect(api.listRuns).toHaveBeenCalledWith({ workflowId: 'wf1', limit: 1 });
+    expect(useFlowStore.getState().runId).toBe('run9');
+    expect(useFlowStore.getState().nodeRuns.n1?.outputs).toEqual({ text: 'hi' });
+    // The user is already on "results" (or wherever) — this must not force a switch.
+    expect(useFlowStore.getState().rightTab).toBe('results');
+  });
+
+  it('is a no-op when a live run is already loaded', async () => {
+    useFlowStore.setState({ runId: 'already-live' });
+
+    await useFlowStore.getState().ensureLatestRunLoaded();
+
+    expect(api.listRuns).not.toHaveBeenCalled();
+    expect(useFlowStore.getState().runId).toBe('already-live');
+  });
+
+  it('is a no-op when the workflow has no runs', async () => {
+    useFlowStore.setState({ runId: undefined });
+    vi.mocked(api.listRuns).mockResolvedValue([]);
+
+    await useFlowStore.getState().ensureLatestRunLoaded();
+
+    expect(useFlowStore.getState().runId).toBeUndefined();
+  });
+
+  it('fails silently when the runs list fetch rejects', async () => {
+    useFlowStore.setState({ runId: undefined });
+    vi.mocked(api.listRuns).mockRejectedValue(new Error('network down'));
+
+    await expect(useFlowStore.getState().ensureLatestRunLoaded()).resolves.toBeUndefined();
+    expect(useFlowStore.getState().runId).toBeUndefined();
+  });
+
+  // Post-review fix (major): openRun() never subscribes to SSE, so loading a
+  // still-'running' row here can never resolve — it would permanently gate
+  // Toolbar's ▶ Run / ⚡ Run buttons (isRunning === runStatus === 'running')
+  // just from opening the "Kết quả" tab on a workflow whose latest run got
+  // orphaned (e.g. a dev-server restart mid-run).
+  it("is a no-op when the latest run's own status is still 'running' (would permanently gate Run buttons)", async () => {
+    useFlowStore.setState({ runId: undefined, runStatus: undefined });
+    vi.mocked(api.listRuns).mockResolvedValue([{ id: 'run-orphan', workflowId: 'wf1', status: 'running', createdAt: 300 }]);
+
+    await useFlowStore.getState().ensureLatestRunLoaded();
+
+    expect(api.getRun).not.toHaveBeenCalled();
+    expect(useFlowStore.getState().runId).toBeUndefined();
+    expect(useFlowStore.getState().runStatus).toBeUndefined();
+  });
 });
 
 describe('showNodePreviews (SPEC-step9.md §1)', () => {
@@ -323,6 +407,32 @@ describe('showNodePreviews (SPEC-step9.md §1)', () => {
     expect(useFlowStore.getState().showNodePreviews).toBe(false);
     useFlowStore.getState().toggleNodePreviews();
     expect(useFlowStore.getState().showNodePreviews).toBe(true);
+  });
+});
+
+// SPEC-step18.md §7.1 (post-review fix): describeOpen moved into the store
+// so the empty-canvas CTA can idempotently *open* the ✨ Describe panel
+// instead of DOM-clicking Toolbar's own toggle button (which silently
+// closed it if the user had already opened it from the Toolbar itself).
+describe('describeOpen (SPEC-step18.md §7.1)', () => {
+  it('toggleDescribe flips open/closed', () => {
+    useFlowStore.setState({ describeOpen: false });
+    useFlowStore.getState().toggleDescribe();
+    expect(useFlowStore.getState().describeOpen).toBe(true);
+    useFlowStore.getState().toggleDescribe();
+    expect(useFlowStore.getState().describeOpen).toBe(false);
+  });
+
+  it('openDescribe is idempotent — stays open even if it was already open', () => {
+    useFlowStore.setState({ describeOpen: true });
+    useFlowStore.getState().openDescribe();
+    expect(useFlowStore.getState().describeOpen).toBe(true);
+  });
+
+  it('closeDescribe always closes', () => {
+    useFlowStore.setState({ describeOpen: true });
+    useFlowStore.getState().closeDescribe();
+    expect(useFlowStore.getState().describeOpen).toBe(false);
   });
 });
 
