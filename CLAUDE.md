@@ -1,6 +1,6 @@
 # FlowForge — Node-based AI Media Workflow Builder (MVP)
 
-Ứng dụng web kiểu ComfyUI nhưng: toàn bộ model chạy qua cloud API (không chạy model local), có AI agent (OpenRouter) tự tạo/sửa workflow từ mô tả tiếng Việt/Anh, và người dùng vẫn chỉnh tay được graph.
+Ứng dụng web kiểu ComfyUI nhưng: toàn bộ model chạy qua cloud API (không chạy model local), có AI agent (OpenRouter) tự tạo/sửa workflow từ mô tả tiếng Việt/Anh, và người dùng vẫn chỉnh tay được graph. Từ 2026-07-13 là app **AI-native "Copilot Song Song"**: trang chủ là chat, AI edit workflow liên tục qua SSE (node vật chất hoá dần trên canvas), chat + canvas luôn cùng khung nhìn, mọi thay đổi tay được log để AI nắm — thiết kế đầy đủ: `docs/DESIGN-ai-native.md`.
 
 ## LUẬT ORCHESTRATION (BẮT BUỘC — áp dụng cho MỌI session trong dự án này)
 
@@ -43,11 +43,11 @@ Lưu ý chủ đích: model id của fal.ai/OpenRouter là string tự do (dropd
 
 - `POST /api/agent/generate-workflow`: mô tả tự nhiên → agent gọi OpenRouter (default lấy từ `OPENROUTER_DEFAULT_MODEL`, hiện là `x-ai/grok-4.5`, configurable) với system prompt chứa NodeRegistry schema **tự generate từ code** + JSON schema workflow + few-shot. Output validate bằng zod; invalid → gửi lỗi lại cho LLM sửa (tối đa 2 retry).
 - `POST /api/agent/edit-node`: workflow + node id + instruction → trả về **JSON patch** (add/remove/update node, add/remove edge) — apply patch rồi validate.
-- UI: mỗi node có nút ✨ chat edit node; toolbar có ô "Describe workflow".
+- UI: **chat pane là kênh AI chính** — mỗi conversation 1-1 workflow, `POST /api/conversations/:id/messages` + SSE turn events (`thinking/patch-op/message/error/done`), digest change log nén thay đổi tay vào context AI (`agent/chatTurn.ts` + `changeDigest.ts`). Mỗi node vẫn có nút ✨ edit node; ô "Describe workflow" trên toolbar đã gỡ ở bước 24 (chat thay thế).
 
 ## Frontend (tối giản)
 
-Canvas React Flow (drag từ sidebar theo category, params panel bên phải), edge validation theo port type (màu port theo type), nút Run + trạng thái realtime qua SSE + preview inline (thumbnail/audio/video player), panel JSON view, danh sách workflows + lịch sử runs, Settings page nhập 3 API key (OpenRouter, fal.ai, Vbee app_id + token) — **lưu server-side, KHÔNG bao giờ gửi key xuống client**.
+Layout AI-native: `ConversationRail | ChatPane | SplitDivider | CanvasPane` — Mode Toggle `Chat|Chia đôi|Canvas` (+ ⌘\, splitRatio persist localStorage), canvas LUÔN mounted (React Flow instance sống qua mọi mode). CanvasPane = Sidebar node palette + React Flow (edge validation theo port type, màu port theo type) + panel phải 4 tab `Params/Runs/Kết quả/Lịch sử`. Nút Run + trạng thái realtime qua SSE + preview inline, JSON view. Mọi thao tác tay trên canvas auto-log thành PatchOp (`store/manualLog.ts` — queue + debounce + 409 rebase) để AI nắm; AI sửa tới đâu node/edge vật chất hoá tới đó (`ff-node-pop`/`ff-edge-draw`). Settings page nhập 3 API key (OpenRouter, fal.ai, Vbee app_id + token) — **lưu server-side, KHÔNG bao giờ gửi key xuống client**.
 
 ## Cấu trúc
 
@@ -96,9 +96,11 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
 25. ✅ `packages/shared` — tách `applyPatch` + `PatchOpSchema` + `PatchError` + `opScope`/`changeScope` dùng chung FE/BE (đôn lên trước vì 26/27 đều cần applyPatch client). Source-export trực tiếp (`exports` → `./src/index.ts`) — tsx/vitest/vite/tsc đều resolve, KHÔNG cần build tay; `applyPatch<W extends WorkflowShape>` generic nên 2 kiểu Workflow của server/web dùng thẳng không cast; `agent/patch.ts` thành thin re-export (caller cũ giữ nguyên import path) — spec: `docs/SPEC-step25.md`
 26. ✅ Canvas sống theo từng patch-op: `applyOptimisticOp` (applyPatch shared, không set dirty, PatchError bỏ qua), op đầu tự mở split từ chat mode, highlight map + keyframes `ff-node-pop`/`ff-node-flash`/`ff-edge-draw` (re-trigger theo nonce, tôn trọng reduced-motion), reconcile onMessage server luôn thắng; bỏ nút "Bỏ qua animation" (server đã cap 1.5s — lệch design có chủ đích) — spec: `docs/SPEC-step26.md`
 27. ✅ Auto-log thay đổi tay: `manualLog.ts` (queue tuần tự, debounce param 800ms/move 500ms, version chain, 409→rebase 1 lần với mergeLocalOnly, 422 drop im lặng, network fail→dirty+toast, flush trước run/save/đổi conversation) + entry gắn workflowId chống ghi nhầm khi switch (critical fix từ review) + tab Lịch sử thứ 4 (🤖/✋, toggle cosmetic, ↺ Khôi phục) + `ui/Toast` + dirty semantics mới (log thành công = đã persist) — spec: `docs/SPEC-step27.md`
-28. ⬜ E2E free-tier luồng chat + revert + version-conflict (mock OpenRouter)
+28. ✅ E2E free-tier luồng chat qua mock OpenRouter (`e2e/mock-openrouter.ts` node:http thuần + env `OPENROUTER_BASE_URL` additive, mock CHỈ bật free tier): 5 kịch bản — chat tạo workflow + auto-split + row 🤖, digest `[tay]` tới AI, digest revert, nút ■ Dừng, version-conflict rebuild (≥2 request) — spec: `docs/SPEC-step28.md`
 
-Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 413 server + 20 shared + 320 web + 22 e2e tests.** Đang làm: lộ trình AI-native ở trên, vẫn theo luật orchestration.
+**LỘ TRÌNH AI-NATIVE HOÀN TẤT 2026-07-13** (9 bước, mỗi bước: Sonnet implement → 2 reviewer Opus → Sonnet verify → fix → orchestrator nghiệm thu; smoke thật cuối: 1 turn chat grok-4.5 chạy sống đủ thinking→patch-op→message→done).
+
+Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 413 server + 20 shared + 320 web + 27 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 

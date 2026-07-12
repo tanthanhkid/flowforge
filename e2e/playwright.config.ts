@@ -56,6 +56,10 @@ const tmpDir = path.join(here, '.tmp');
 
 const SERVER_PORT = 3777;
 const WEB_PORT = 5273;
+// SPEC-step28.md §3/§4 — mock OpenRouter server (e2e/mock-openrouter.ts),
+// FREE tier only. `chat.spec.ts` also imports this literal (kept in sync by
+// hand, same as SERVER_PORT/WEB_PORT above having no shared source either).
+const MOCK_OPENROUTER_PORT = 3979;
 
 const isRealTier = Boolean(process.env.E2E_REAL);
 
@@ -104,6 +108,13 @@ export default defineConfig({
         // the static presets (`meta.source: 'static'`), no fal.ai/OpenRouter
         // fetch attempted.
         CATALOG_LIVE: '0',
+        // SPEC-step28.md §4 — FREE tier only: redirects every
+        // llm.generate/llm.transform/chat-turn OpenRouter call to the mock
+        // server below instead of the real API, at zero cost. `isRealTier`
+        // sets neither var, so `getEnv('OPENROUTER_BASE_URL')` falls back to
+        // its real default and `OPENROUTER_API_KEY` still comes from the
+        // real `.env.local` — `e2e:real`'s existing, unchanged behavior.
+        ...(isRealTier ? {} : { OPENROUTER_BASE_URL: `http://127.0.0.1:${MOCK_OPENROUTER_PORT}`, OPENROUTER_API_KEY: 'e2e-dummy' }),
       },
     },
     {
@@ -121,5 +132,22 @@ export default defineConfig({
         FLOWFORGE_SERVER_PORT: String(SERVER_PORT),
       },
     },
+    // SPEC-step28.md §3/§4 — FREE tier only: never started for `E2E_REAL=1`
+    // (real tier must behave exactly as before this step — no mock process,
+    // no chance of it ever intercepting a real-tier OpenRouter call).
+    ...(isRealTier
+      ? []
+      : [
+          {
+            command: 'pnpm --filter server exec tsx ../../e2e/mock-openrouter.ts',
+            cwd: repoRoot,
+            url: `http://127.0.0.1:${MOCK_OPENROUTER_PORT}/requests`,
+            reuseExistingServer: false,
+            timeout: 30_000,
+            env: {
+              PORT: String(MOCK_OPENROUTER_PORT),
+            },
+          },
+        ]),
   ],
 });

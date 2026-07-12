@@ -22,7 +22,19 @@ interface OpenRouterResponse {
   choices?: Array<{ message?: { content?: string } }>;
 }
 
-const OPENROUTER_URL = 'https://openrouter.ai/api/v1/chat/completions';
+/**
+ * SPEC-step28.md §2: computed fresh on every call (NOT a module-load-time
+ * constant) so a test/e2e process that sets `OPENROUTER_BASE_URL` in
+ * `process.env` AFTER this module has already been imported (e.g.
+ * playwright.config.ts's webServer `env`, which is set before the server
+ * process even starts, but also `config.test.ts`-style `vi.resetModules()`
+ * patterns elsewhere in the codebase) still gets the override — a cached
+ * constant would freeze in whatever `OPENROUTER_BASE_URL` resolved to at
+ * first import.
+ */
+function openRouterCompletionsUrl(): string {
+  return `${getEnv('OPENROUTER_BASE_URL')}/chat/completions`;
+}
 
 /**
  * Wraps a raw HttpError/network error with the node/provider name + model id
@@ -54,7 +66,7 @@ export async function chatCompletion(args: ChatCompletionArgs): Promise<string> 
   let json: OpenRouterResponse;
   try {
     const res = await requestJson<OpenRouterResponse>({
-      url: OPENROUTER_URL,
+      url: openRouterCompletionsUrl(),
       method: 'POST',
       headers: {
         Authorization: `Bearer ${apiKey}`,

@@ -16,12 +16,19 @@ import { config as dotenvConfig } from 'dotenv';
 export type EnvKey =
   | 'OPENROUTER_API_KEY'
   | 'OPENROUTER_DEFAULT_MODEL'
+  | 'OPENROUTER_BASE_URL'
   | 'FAL_KEY'
   | 'VBEE_APP_ID'
   | 'VBEE_TOKEN';
 
 const DEFAULTS: Partial<Record<EnvKey, string>> = {
   OPENROUTER_DEFAULT_MODEL: 'x-ai/grok-4.5',
+  // SPEC-step28.md §2 — additive: only ever overridden by e2e's free-tier
+  // webServer env (playwright.config.ts), pointing this at the local mock
+  // OpenRouter server (e2e/mock-openrouter.ts) instead of the real API, at
+  // zero cost. Production/dev/real-tier e2e never set this, so
+  // `openrouter.ts` keeps hitting the real `https://openrouter.ai/api/v1`.
+  OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
 };
 
 /**
