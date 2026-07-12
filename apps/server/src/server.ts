@@ -8,8 +8,12 @@ import { fileURLToPath } from 'node:url';
 import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
+import { ChatTurnManager } from './chatTurnManager.js';
 import { findRepoRoot } from './config.js';
 import { backfillConversations } from './db/backfill.js';
+import { ChangesRepo } from './db/changes.js';
+import { ConversationsRepo } from './db/conversations.js';
+import { MessagesRepo } from './db/messages.js';
 import { openDb, SqliteCacheStore, SqliteRunStore } from './db/sqlite.js';
 import { WorkflowsRepo } from './db/workflows.js';
 import { Engine, WorkflowValidationError } from './engine/executor.js';
@@ -17,6 +21,8 @@ import type { NodeRegistry } from './engine/registry.js';
 import { createDefaultRegistry } from './nodes/index.js';
 import { registerAgentRoutes } from './routes/agent.js';
 import { registerArtifactsRoutes } from './routes/artifacts.js';
+import { registerChangesRoutes } from './routes/changes.js';
+import { registerConversationsRoutes } from './routes/conversations.js';
 import { registerEstimateRoutes } from './routes/estimate.js';
 import { registerModelCatalogRoutes } from './routes/modelCatalog.js';
 import { registerRegistryRoutes } from './routes/registry.js';
@@ -36,6 +42,10 @@ export interface ServerOpts {
   logger?: boolean;
   /** Env file read/written by /api/settings. Default: <repoRoot>/.env.local */
   envFilePath?: string;
+  /** ChatTurnManager's `patch-op` pacing override (SPEC-step22.md §3.4) —
+   * test-only DI, same spirit as `dbPath`/`registry` above. Production
+   * default (undefined here) is ChatTurnManager's own `min(180ms, 1500/total)`. */
+  chatTurnPaceMs?: (total: number) => number;
 }
 
 declare module 'fastify' {
@@ -66,6 +76,17 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   const engine = new Engine(registry, { runs: runStore, cache: cacheStore }, { artifactsDir });
   const runManager = new RunManager(engine, runStore, registry);
   const workflowsRepo = new WorkflowsRepo(db);
+  const conversationsRepo = new ConversationsRepo(db);
+  const messagesRepo = new MessagesRepo(db);
+  const changesRepo = new ChangesRepo(db);
+  const chatTurnManager = new ChatTurnManager({
+    registry,
+    workflows: workflowsRepo,
+    conversations: conversationsRepo,
+    messages: messagesRepo,
+    changes: changesRepo,
+    paceMs: opts.chatTurnPaceMs,
+  });
 
   const app = Fastify({ logger: opts.logger ?? false });
 
@@ -111,6 +132,8 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   registerAgentRoutes(app, { registry });
   registerSettingsRoutes(app, { envFilePath });
   registerEstimateRoutes(app);
+  registerConversationsRoutes(app, { conversationsRepo, messagesRepo, workflowsRepo, chatTurnManager });
+  registerChangesRoutes(app, { workflowsRepo, changesRepo, conversationsRepo });
 
   app.addHook('onClose', async () => {
     db.close();

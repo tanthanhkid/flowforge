@@ -47,6 +47,18 @@ function flattenToLines(changes: WorkflowChange[]): string[] {
     const prefix = sourcePrefix(change.source);
     const ops = change.ops as PatchOp[];
 
+    // SPEC-step22.md §5: a change with zero ops (currently only produced by
+    // revert) carries no per-op detail to render — without this branch it
+    // would silently vanish from the digest, and the AI would never learn
+    // the user just reverted. Emit exactly one line from its `summary`
+    // instead, keyed uniquely (never dedupe'd away by a later op-derived
+    // line — `uniq:` keys never collide with the `label:`/`param:` keys
+    // above).
+    if (ops.length === 0) {
+      lines.set(`uniq:${seq++}`, `${prefix} ${change.summary}`);
+      continue;
+    }
+
     for (const op of ops) {
       switch (op.op) {
         case 'add-node': {

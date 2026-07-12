@@ -89,7 +89,7 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
 
 20. ✅ Nền dữ liệu: 3 bảng mới (`conversations` 1-1 workflow, `messages`, `workflow_changes` kèm `snapshot_after` cho revert), cột `workflows.version` + `ensureColumn` migration, 3 repo mới + `saveVersioned`/`VersionConflictError` (optimistic concurrency), backfill idempotent cho workflow mồ côi (server startup + seed) — spec: `docs/SPEC-step20.md`
 21. ✅ Vòng lặp AI: `agent/chatTurn.ts` (runChatTurn — retry 3 attempt, optimistic concurrency rebuild-1-lần-rồi-fail-safe, AbortSignal xuyên suốt, events cho SSE) + `changeDigest.ts` (dedupe (nodeId,paramKey), cap 40 dòng/6000 ký tự, prefix [tay]/[AI]) + op `move-node` (scope cosmetic) + `buildChatSystemPrompt` (2 builder cũ giữ nguyên output byte-identical) + `emptyWorkflow()` — spec: `docs/SPEC-step21.md`
-22. ⬜ SSE ChatTurnManager + routes conversations/messages/changes/revert (+409)
+22. ✅ Tầng HTTP: `chatTurnManager.ts` (buffer/replay/pacing patch-op, stop, LRU 200, TurnInProgressError→409) + routes `conversations.ts` (8 endpoint, SSE turn events + fallback DB, title auto từ tin đầu) + `changes.ts` (GET/POST log tay shape-validate + 409 version-conflict, revert theo snapshot ghi change mới) + digest hiện dòng revert — spec: `docs/SPEC-step22.md`
 23. ⬜ ConversationRail + ChatPane thay modal WorkflowList
 24. ⬜ SplitDivider + Mode Toggle (Chat|Chia đôi|Canvas) + refactor App.tsx
 25. ⬜ Nối SSE streaming + animation canvas theo op
@@ -97,7 +97,7 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
 27. ⬜ `packages/shared` — tách `applyPatch` dùng chung FE/BE
 28. ⬜ E2E free-tier luồng chat + revert + version-conflict (mock OpenRouter)
 
-Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 403 server + 158 web + 13 e2e tests.** Đang làm: lộ trình AI-native ở trên, vẫn theo luật orchestration.
+Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 429 server + 158 web + 13 e2e tests.** Đang làm: lộ trình AI-native ở trên, vẫn theo luật orchestration.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 

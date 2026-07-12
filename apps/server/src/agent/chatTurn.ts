@@ -86,6 +86,17 @@ export class ChatTurnAbortedError extends Error {
 }
 
 export interface ChatTurnEvents {
+  /**
+   * SPEC-step22.md §2 — fires SYNCHRONOUSLY right after the turn's two
+   * messages (user + assistant placeholder) are written, i.e. still within
+   * the synchronous prefix of this async function (before the first
+   * `await chatCompletion(...)`). `chatTurnManager.ts`'s `start()` relies on
+   * this: it calls `runChatTurn` without awaiting it, and by the time that
+   * call expression returns a (still-pending) Promise, `onStart` has already
+   * run — so the manager can synchronously hand `{ userMessageId,
+   * assistantMessageId }` back to its own (synchronous) caller, the route.
+   */
+  onStart?: (ids: { userMessageId: string; assistantMessageId: string }) => void;
   onThinking?: (note: string) => void;
   onPatchOp?: (op: PatchOp, index: number, total: number) => void;
   onMessage?: (p: { reply: string; workflow: Workflow; version: number; changeId: number | null }) => void;
@@ -128,9 +139,14 @@ function buildLlmMessages(systemPrompt: string, history: Message[], userContent:
   return [{ role: 'system', content: systemPrompt }, ...historyMessages, { role: 'user', content: userContent }];
 }
 
-/** Deterministic (no LLM call) 1-line summary for a `workflow_changes` row —
- * counts ops by kind, e.g. "AI: +2 node, ±1 node, +2 edge". */
-function summarizeOps(ops: PatchOp[]): string {
+/**
+ * Deterministic (no LLM call) 1-line summary for a `workflow_changes` row —
+ * counts ops by kind, e.g. "AI: +2 node, ±1 node, +2 edge". Exported
+ * (SPEC-step22.md §5) so `routes/changes.ts`'s manual/"tay" change endpoint
+ * can reuse it verbatim as the fallback `summary` when the caller doesn't
+ * supply one, instead of duplicating this counting logic.
+ */
+export function summarizeOps(ops: PatchOp[]): string {
   let added = 0;
   let removed = 0;
   let updated = 0;
@@ -199,6 +215,7 @@ export async function runChatTurn(
   deps.messages.create({ id: userMessageId, conversationId, role: 'user', content, status: 'done' });
   const assistantMessageId = genId();
   deps.messages.create({ id: assistantMessageId, conversationId, role: 'assistant', content: '', status: 'pending' });
+  deps.events?.onStart?.({ userMessageId, assistantMessageId });
 
   let wf0 = wfv0.workflow;
   let v0 = wfv0.version;
