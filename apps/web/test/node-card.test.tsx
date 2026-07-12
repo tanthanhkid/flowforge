@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { NodeSpec, WorkflowNode } from '../src/api/types.ts';
 import { NodeCard } from '../src/canvas/NodeCard.tsx';
 import { PORT_COLORS } from '../src/canvas/portColors.ts';
+import { useChatStore } from '../src/store/chat.ts';
 import { useFlowStore } from '../src/store/flow.ts';
 import type { FlowNode, FlowNodeData } from '../src/canvas/types.ts';
 
@@ -263,6 +264,42 @@ describe('NodeCard', () => {
       expect(useFlowStore.getState().scrollToNodeId).toBe('n1');
       expect(useFlowStore.getState().rightTab).toBe('results');
       useFlowStore.setState({ scrollToNodeId: null, rightTab: 'params' });
+    });
+  });
+
+  // SPEC-step26.md §3/§4.3 — AI patch-op one-shot animation classes, driven
+  // by store/chat.ts's `opHighlights` (keyed by this node's own id, 'n1').
+  describe('AI patch-op highlight (SPEC-step26.md §3)', () => {
+    afterEach(() => {
+      useChatStore.setState({ opHighlights: {} });
+    });
+
+    it('applies the ff-node-pop class when highlighted as added', () => {
+      useChatStore.setState({ opHighlights: { n1: { kind: 'added', nonce: 1 } } });
+      renderNode({ node: workflowNode, spec, runState: undefined });
+      expect(screen.getByTestId('node-card').className).toContain('ff-node-pop');
+    });
+
+    it('applies the ff-node-flash class when highlighted as updated', () => {
+      useChatStore.setState({ opHighlights: { n1: { kind: 'updated', nonce: 1 } } });
+      renderNode({ node: workflowNode, spec, runState: undefined });
+      expect(screen.getByTestId('node-card').className).toContain('ff-node-flash');
+    });
+
+    it('has neither animation class once the highlight is cleared', () => {
+      useChatStore.setState({ opHighlights: {} });
+      renderNode({ node: workflowNode, spec, runState: undefined });
+      const className = screen.getByTestId('node-card').className;
+      expect(className).not.toContain('ff-node-pop');
+      expect(className).not.toContain('ff-node-flash');
+    });
+
+    it("does not apply an animation class for a different node's highlight", () => {
+      useChatStore.setState({ opHighlights: { 'some-other-node': { kind: 'added', nonce: 1 } } });
+      renderNode({ node: workflowNode, spec, runState: undefined });
+      const className = screen.getByTestId('node-card').className;
+      expect(className).not.toContain('ff-node-pop');
+      expect(className).not.toContain('ff-node-flash');
     });
   });
 });

@@ -86,9 +86,11 @@
 }
 
 /*
- * SPEC-step18.md §1 — shared decorative keyframes. Named `ff-*` so any
- * component can reference them by class/inline `animationName` without
- * redefining. All four are neutralized under prefers-reduced-motion below.
+ * SPEC-step18.md §1 / SPEC-step26.md §3 — shared decorative keyframes. Named
+ * `ff-*` so any component can reference them by class/inline `animationName`
+ * without redefining. Every one of them is neutralized under
+ * prefers-reduced-motion below (the `*` selector rule applies regardless of
+ * which specific keyframe/class an element ends up using).
  */
 @keyframes ff-barber {
   from {
@@ -128,6 +130,56 @@
   to {
     stroke-dashoffset: -28;
   }
+}
+
+/*
+ * SPEC-step26.md §3 — AI patch-op "materialize" animations, driven by
+ * store/chat.ts's `opHighlights` (NodeCard.tsx/BrutalEdge.tsx apply these as
+ * plain classes, each keyed by `nonce` to force a replay — see their own
+ * comments). Single-iteration ("chạy 1 lần"), unlike the four looping
+ * keyframes above.
+ */
+@keyframes ff-node-pop {
+  0% {
+    transform: scale(0.85);
+    opacity: 0;
+    box-shadow: 0 0 0 #0d0d0d;
+  }
+  60% {
+    transform: scale(1.02);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+    box-shadow: 5px 5px 0 #0d0d0d;
+  }
+}
+
+@keyframes ff-node-flash {
+  0%,
+  100% {
+    border-color: #0d0d0d;
+  }
+  50% {
+    border-color: var(--color-accent);
+  }
+}
+
+.ff-node-pop {
+  animation: ff-node-pop 0.25s ease-out 1;
+}
+
+.ff-node-flash {
+  animation: ff-node-flash 0.4s ease-in-out 1;
+}
+
+/* `add-edge`'s one-shot "draw" — reuses `ff-dash` above (spec's own "tái
+   dùng pattern ff-dash nếu có"), just a single ~300ms pass instead of an
+   infinite loop. */
+.ff-edge-draw {
+  stroke-dasharray: 8 6;
+  animation: ff-dash 0.3s linear 1;
 }
 
 /*

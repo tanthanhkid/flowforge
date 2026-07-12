@@ -1,9 +1,10 @@
 /**
- * store/chat.ts (SPEC-step23.md §4 / §8.2): selectConversation adopting the
- * workflow into store/flow.ts, sendMessage's SSE-driven happy path, the 409
- * turn-in-progress guard, stop, and removeConversation's active-conversation
- * cleanup. Mocks `api/client.ts` the same way test/store.test.ts does for
- * store/flow.ts.
+ * store/chat.ts (SPEC-step23.md §4 / §8.2, patch-op animation SPEC-step26.md
+ * §2/§4): selectConversation adopting the workflow into store/flow.ts,
+ * sendMessage's SSE-driven happy path (including per-op optimistic apply +
+ * highlight bookkeeping + reconcile-always-wins), the 409 turn-in-progress
+ * guard, stop, and removeConversation's active-conversation cleanup. Mocks
+ * `api/client.ts` the same way test/store.test.ts does for store/flow.ts.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TurnEventHandlers } from '../src/api/client.ts';
@@ -50,6 +51,7 @@ function resetStores(): void {
     chatErrorNonce: 0,
     railCollapsed: false,
     search: '',
+    opHighlights: {},
     splitRatio: 1,
     splitAnimating: false,
     focusComposerNonce: 0,
@@ -168,7 +170,14 @@ describe('sendMessage', () => {
     expect(api.listConversations).toHaveBeenCalled();
   });
 
-  it('ignores patch-op events in this step (no-op, no crash) — SPEC-step25.md territory', async () => {
+  // SPEC-step26.md §4.2 — onMessage's reconcile (adoptWorkflow) always wins
+  // over whatever store/flow.ts's applyOptimisticOp built up locally from
+  // this turn's own patch-op events.
+  it("onMessage's reconcile overwrites the optimistic workflow built up from this turn's own patch-op events", async () => {
+    useFlowStore.setState({
+      workflow: { version: 1, id: 'wf1', name: 'wf', nodes: [], edges: [] },
+      dirty: false,
+    });
     useChatStore.setState({ activeConversationId: 'c1', messages: [] });
     vi.mocked(api.postChatMessage).mockResolvedValue({ userMessageId: 'u2', assistantMessageId: 'a2' });
     let handlers: TurnEventHandlers = {};
@@ -179,9 +188,51 @@ describe('sendMessage', () => {
     vi.mocked(api.listConversations).mockResolvedValue([]);
 
     await useChatStore.getState().sendMessage('test');
-    expect(() =>
-      handlers.onPatchOp?.({ op: { op: 'move-node', nodeId: 'n1', position: { x: 0, y: 0 } }, index: 0, total: 1 }),
-    ).not.toThrow();
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'optimistic-only', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 1,
+    });
+    expect(useFlowStore.getState().workflow.nodes.map((n) => n.id)).toEqual(['optimistic-only']);
+
+    const serverWorkflow: Workflow = {
+      version: 1,
+      id: 'wf1',
+      name: 'Server truth',
+      nodes: [{ id: 'server-node', type: 'input.text', params: {} }],
+      edges: [],
+    };
+    handlers.onMessage?.({ content: 'done', workflow: serverWorkflow, version: 2, changeId: 1 });
+
+    expect(useFlowStore.getState().workflow.nodes.map((n) => n.id)).toEqual(['server-node']);
+  });
+
+  it("move-node ops both move the node and set an 'updated' highlight (not 'added')", async () => {
+    useFlowStore.setState({
+      workflow: {
+        version: 1,
+        id: 'wf1',
+        name: 'wf',
+        nodes: [{ id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } }],
+        edges: [],
+      },
+      dirty: false,
+    });
+    useChatStore.setState({ activeConversationId: 'c1', messages: [] });
+    vi.mocked(api.postChatMessage).mockResolvedValue({ userMessageId: 'u2', assistantMessageId: 'a2' });
+    let handlers: TurnEventHandlers = {};
+    vi.mocked(api.openTurnEvents).mockImplementation((_conv, _msg, h) => {
+      handlers = h;
+      return vi.fn();
+    });
+    vi.mocked(api.listConversations).mockResolvedValue([]);
+
+    await useChatStore.getState().sendMessage('test');
+    handlers.onPatchOp?.({ op: { op: 'move-node', nodeId: 'n1', position: { x: 50, y: 60 } }, index: 0, total: 1 });
+
+    expect(useFlowStore.getState().workflow.nodes[0]?.position).toEqual({ x: 50, y: 60 });
+    expect(useFlowStore.getState().dirty).toBe(false);
+    expect(useChatStore.getState().opHighlights.n1).toMatchObject({ kind: 'updated' });
   });
 
   it('an error event marks the assistant message as error and sets chatError', async () => {
@@ -610,8 +661,28 @@ describe('layout auto-behaviors', () => {
     expect(useChatStore.getState().splitRatio).toBe(1);
   });
 
-  it('sendMessage auto-splits to 0.4 on a non-null changeId while chat-only', async () => {
-    useChatStore.setState({ activeConversationId: 'c1', messages: [], splitRatio: 1 });
+  // SPEC-step26.md §2.1/§4.4 — superseded the SPEC-step24.md §2 interim
+  // heuristic above (auto-split on `onMessage`'s non-null `changeId`): the
+  // trigger now lives on the turn's first `patch-op` event instead — see
+  // the dedicated `onPatchOp` describe block below for the full coverage
+  // (index-0-only, chat-mode-only, guarded by conversation).
+});
+
+// SPEC-step26.md §2/§4.1 — onPatchOp: optimistic applyPatch (in order,
+// dirty stays false), PatchError skipped silently, highlight bookkeeping
+// per op kind (+ cleared on done), the stale-conversation guard, and the
+// turn's-first-op auto-split trigger (chat-mode-only, index-0-only).
+describe('onPatchOp (SPEC-step26.md §2)', () => {
+  beforeEach(() => {
+    useFlowStore.setState({
+      workflow: { version: 1, id: 'wf1', name: 'wf', nodes: [], edges: [] },
+      dirty: false,
+    });
+  });
+
+  /** Starts a turn (default splitRatio left as whatever the caller already set) and returns its SSE handlers. */
+  async function startTurn(): Promise<TurnEventHandlers> {
+    useChatStore.setState({ activeConversationId: 'c1', messages: [] });
     vi.mocked(api.postChatMessage).mockResolvedValue({ userMessageId: 'u1', assistantMessageId: 'a1' });
     let handlers: TurnEventHandlers = {};
     vi.mocked(api.openTurnEvents).mockImplementation((_conv, _msg, h) => {
@@ -619,26 +690,138 @@ describe('layout auto-behaviors', () => {
       return vi.fn();
     });
     vi.mocked(api.listConversations).mockResolvedValue([]);
-
     await useChatStore.getState().sendMessage('test');
-    handlers.onMessage?.({ content: 'ok', workflow: sampleWorkflow, version: 1, changeId: 7 });
+    return handlers;
+  }
 
+  it('applies ops in order onto the flow workflow, without setting dirty (2 add-node ops -> 2 nodes)', async () => {
+    const handlers = await startTurn();
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 2,
+    });
+    // n2 has no position -> gets the deterministic temporary grid slot for index 1.
+    handlers.onPatchOp?.({ op: { op: 'add-node', node: { id: 'n2', type: 'input.text', params: {} } }, index: 1, total: 2 });
+
+    const workflow = useFlowStore.getState().workflow;
+    expect(workflow.nodes.map((n) => n.id)).toEqual(['n1', 'n2']);
+    expect(workflow.nodes[1]?.position).toEqual({ x: 460, y: 120 });
+    expect(useFlowStore.getState().dirty).toBe(false);
+  });
+
+  it('a PatchError op (references a node that never got created) is skipped silently — console.warn, no throw, workflow unaffected', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const handlers = await startTurn();
+
+    expect(() =>
+      handlers.onPatchOp?.({ op: { op: 'update-node', nodeId: 'missing', params: {} }, index: 0, total: 1 }),
+    ).not.toThrow();
+
+    expect(useFlowStore.getState().workflow.nodes).toEqual([]);
+    expect(warnSpy).toHaveBeenCalled();
+    warnSpy.mockRestore();
+  });
+
+  it('sets a highlight per op kind, and clears every highlight once the turn is done', async () => {
+    const handlers = await startTurn();
+
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 3,
+    });
+    expect(useChatStore.getState().opHighlights.n1).toMatchObject({ kind: 'added' });
+
+    handlers.onPatchOp?.({ op: { op: 'update-node', nodeId: 'n1', params: { value: 'x' } }, index: 1, total: 3 });
+    expect(useChatStore.getState().opHighlights.n1).toMatchObject({ kind: 'updated' });
+
+    handlers.onPatchOp?.({
+      op: { op: 'add-edge', edge: { id: 'e1', from: { node: 'n1', port: 'text' }, to: { node: 'n1', port: 'text' } } },
+      index: 2,
+      total: 3,
+    });
+    expect(useChatStore.getState().opHighlights.e1).toMatchObject({ kind: 'edge-added' });
+
+    handlers.onDone?.();
+    expect(useChatStore.getState().opHighlights).toEqual({});
+  });
+
+  it('a remove-* op clears any highlight for that id instead of setting one', async () => {
+    const handlers = await startTurn();
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 2,
+    });
+    expect(useChatStore.getState().opHighlights.n1).toBeDefined();
+
+    handlers.onPatchOp?.({ op: { op: 'remove-node', nodeId: 'n1' }, index: 1, total: 2 });
+    expect(useChatStore.getState().opHighlights.n1).toBeUndefined();
+    expect(useFlowStore.getState().workflow.nodes).toEqual([]);
+  });
+
+  it('guards a stale conversation: patch-op events for a conversation the user navigated away from do not touch the (now different) displayed workflow', async () => {
+    const handlers = await startTurn(); // c1 active, wf1 displayed
+
+    vi.mocked(api.getConversation).mockResolvedValue({
+      conversation: { id: 'c2', workflowId: 'wf2', title: 'B', createdAt: 1, updatedAt: 2, lastSeenChangeId: null },
+      messages: [],
+      workflow: { version: 1, id: 'wf2', name: 'B', nodes: [], edges: [] },
+      version: 1,
+    });
+    await useChatStore.getState().selectConversation('c2');
+
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 1,
+    });
+
+    expect(useFlowStore.getState().workflow.id).toBe('wf2');
+    expect(useFlowStore.getState().workflow.nodes).toEqual([]);
+  });
+
+  it("the turn's first patch-op auto-splits to 0.4 when the layout is chat-only", async () => {
+    useChatStore.setState({ splitRatio: 1 });
+    const handlers = await startTurn();
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 1,
+    });
     expect(useChatStore.getState().splitRatio).toBe(0.4);
   });
 
-  it('sendMessage does NOT auto-split when changeId is null', async () => {
-    useChatStore.setState({ activeConversationId: 'c1', messages: [], splitRatio: 1 });
-    vi.mocked(api.postChatMessage).mockResolvedValue({ userMessageId: 'u2', assistantMessageId: 'a2' });
-    let handlers: TurnEventHandlers = {};
-    vi.mocked(api.openTurnEvents).mockImplementation((_conv, _msg, h) => {
-      handlers = h;
-      return vi.fn();
+  it('does NOT auto-split when the layout is already split or canvas', async () => {
+    useChatStore.setState({ splitRatio: 0.5 });
+    const handlers = await startTurn();
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 1,
     });
-    vi.mocked(api.listConversations).mockResolvedValue([]);
+    expect(useChatStore.getState().splitRatio).toBe(0.5);
 
-    await useChatStore.getState().sendMessage('test');
-    handlers.onMessage?.({ content: 'ok', workflow: sampleWorkflow, version: 1, changeId: null });
+    useChatStore.setState({ splitRatio: 0 });
+    handlers.onPatchOp?.({ op: { op: 'add-node', node: { id: 'n2', type: 'input.text', params: {} } }, index: 0, total: 1 });
+    expect(useChatStore.getState().splitRatio).toBe(0);
+  });
 
+  it('only the first op (index 0) of a turn triggers the split, not later ones', async () => {
+    useChatStore.setState({ splitRatio: 1 });
+    const handlers = await startTurn();
+    handlers.onPatchOp?.({
+      op: { op: 'add-node', node: { id: 'n1', type: 'input.text', params: {}, position: { x: 0, y: 0 } } },
+      index: 0,
+      total: 2,
+    });
+    expect(useChatStore.getState().splitRatio).toBe(0.4);
+
+    // Pretend the user flipped back to chat-only mid-turn — a later op must
+    // NOT re-trigger the split.
+    useChatStore.setState({ splitRatio: 1 });
+    handlers.onPatchOp?.({ op: { op: 'add-node', node: { id: 'n2', type: 'input.text', params: {} } }, index: 1, total: 2 });
     expect(useChatStore.getState().splitRatio).toBe(1);
   });
 });

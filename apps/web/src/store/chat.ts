@@ -5,15 +5,51 @@
  * adopts its workflow into `useFlowStore` too, so the canvas pane and this
  * pane never disagree about which workflow is "current".
  *
- * `onPatchOp` is deliberately a no-op here (see `sendMessage` below) —
- * SPEC-step25.md is what animates the canvas per-op as a turn streams in;
- * this step only needs the turn to resolve into a final workflow.
+ * `onPatchOp` (SPEC-step26.md §2) is where the canvas "vật chất hoá dần" —
+ * each `patch-op` SSE event optimistically applies onto the *displayed*
+ * workflow via `useFlowStore.getState().applyOptimisticOp` (shared's
+ * `applyPatch`, SPEC-step25.md) and records a transient highlight
+ * (`opHighlights`) that NodeCard.tsx/BrutalEdge.tsx read to play a one-shot
+ * CSS animation. The turn's final `message` event (onMessage below,
+ * unchanged since SPEC-step23.md) always reconciles with the server's
+ * authoritative workflow afterwards, so a bug in this optimistic copy can
+ * never persist past one turn.
+ *
+ * Deliberate deviation from DESIGN-ai-native.md §II.6's original animation
+ * design: NO "Bỏ qua animation" skip button (SPEC-step26.md §3) — the
+ * server already caps a turn's total patch-op pacing at ≤1.5s (bước 22), so
+ * a dedicated skip control isn't worth the UI surface for a delay that
+ * short.
  */
 import { create } from 'zustand';
 import * as api from '../api/client.ts';
 import { ApiError } from '../api/client.ts';
-import type { ChatMessage, ConversationSummary } from '../api/types.ts';
+import type { ChatMessage, ConversationSummary, PatchOp } from '../api/types.ts';
 import { useFlowStore } from './flow.ts';
+
+/** SPEC-step26.md §2.3 — what NodeCard.tsx/BrutalEdge.tsx animate per highlighted id. */
+export type OpHighlightKind = 'added' | 'updated' | 'edge-added';
+
+export interface OpHighlight {
+  kind: OpHighlightKind;
+  /**
+   * A fresh value every time this exact id is (re-)highlighted — even
+   * across two different turns that both, say, `update-node` the same id
+   * (which would otherwise leave `kind` unchanged and give NodeCard/
+   * BrutalEdge nothing to key their one-shot animation's replay on).
+   */
+  nonce: number;
+}
+
+// Module-level (not store state) — a monotonic counter backing `nonce`
+// above, same "implementation-only, not itself UI-observable" pattern as
+// this file's `activeTurnUnsubscribe` below (only the *values* it produces,
+// stored inside `opHighlights`, are ever rendered).
+let opHighlightNonceCounter = 0;
+function nextOpHighlightNonce(): number {
+  opHighlightNonceCounter += 1;
+  return opHighlightNonceCounter;
+}
 
 export type LayoutMode = 'chat' | 'split' | 'canvas';
 
@@ -150,6 +186,17 @@ export interface ChatState {
   railCollapsed: boolean;
   search: string;
 
+  /**
+   * SPEC-step26.md §2.3 — keyed by node id or edge id, cleared entirely
+   * once the turn's `onDone` fires (or when the active conversation changes
+   * out from under it). NodeCard.tsx/BrutalEdge.tsx select their own id's
+   * entry directly from this store (same pattern as their existing
+   * `useFlowStore` selectors) rather than having it threaded through
+   * FlowCanvas's node/edge `data` — it's transient animation-only state,
+   * unrelated to the workflow JSON itself.
+   */
+  opHighlights: Record<string, OpHighlight>;
+
   /** SPEC-step24.md §2 — 0..1 share of the chat+divider+canvas span's width given to ChatPane; 0 = canvas-only, 1 = chat-only. Persisted (`ff.splitRatio`), init 1.0 (chat-first) when never saved. */
   splitRatio: number;
   /**
@@ -211,6 +258,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   chatErrorNonce: 0,
   railCollapsed: false,
   search: '',
+  opHighlights: {},
   splitRatio: readPersistedSplitRatio(),
   splitAnimating: false,
   focusComposerNonce: 0,
@@ -231,6 +279,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       turnState: 'idle',
       activeTurnMessageId: null,
       chatError: null,
+      // SPEC-step26.md §2 — a highlight from whatever conversation was
+      // previously displayed must not linger onto this newly-adopted
+      // workflow's (differently-id'd) nodes/edges.
+      opHighlights: {},
     });
     useFlowStore.getState().adoptWorkflow(res.workflow);
     // SPEC-step24.md §2 auto-behavior: opening a non-empty workflow while
@@ -285,6 +337,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         turnState: 'idle',
         activeTurnMessageId: null,
         chatError: null,
+        opHighlights: {},
       });
       useFlowStore.getState().newWorkflow();
     }
@@ -368,9 +421,72 @@ export const useChatStore = create<ChatState>()((set, get) => ({
           messages: state.messages.map((m) => (m.id === assistantMessageId ? { ...m, status: 'streaming' } : m)),
         }));
       },
-      // SPEC-step25.md territory (per-op canvas animation) — this step just
-      // needs the turn to resolve, so patch-op events are ignored here.
-      onPatchOp: () => {},
+      onPatchOp: (data) => {
+        if (!isDisplayed()) return;
+        const { op, index } = data;
+
+        // SPEC-step26.md §2.1 — the turn's FIRST patch-op is the auto-split
+        // trigger now (superseding SPEC-step24.md §2's interim
+        // changeId-on-`message` heuristic below, which STAYED in onMessage
+        // for the rest of that step but is now dead code there — removed):
+        // only when the layout is still chat-only, and only for `index ===
+        // 0` so a later op in the same turn can't re-trigger it after the
+        // user has since flipped back to chat mode mid-turn.
+        if (index === 0 && get().layoutMode() === 'chat') {
+          get().setSplitRatio(0.4, { animate: true });
+        }
+
+        // SPEC-step26.md §2.2 — an `add-node` op the LLM didn't bother to
+        // position gets a deterministic temporary grid slot (4 columns,
+        // 340×220 spacing) purely so it doesn't materialize at (0,0) atop
+        // every other un-positioned node this same turn; `autoLayout()` in
+        // onMessage below replaces every position with a real layout once
+        // the turn resolves, so this only has to look reasonable for the
+        // ~1.5s the turn is still streaming.
+        const effectiveOp: PatchOp =
+          op.op === 'add-node' && !op.node.position
+            ? {
+                ...op,
+                node: {
+                  ...op.node,
+                  position: { x: 120 + (index % 4) * 340, y: 120 + Math.floor(index / 4) * 220 },
+                },
+              }
+            : op;
+
+        const applied = useFlowStore.getState().applyOptimisticOp(effectiveOp);
+        // A `PatchError` was already console.warn'd inside applyOptimisticOp
+        // — no highlight to record for an op that didn't actually apply;
+        // the turn's `message` event still reconciles the real state.
+        if (!applied) return;
+
+        // SPEC-step26.md §2.3 — highlight bookkeeping for NodeCard.tsx's/
+        // BrutalEdge.tsx's one-shot CSS animations (§3). `remove-*` ops
+        // clear any highlight for that id instead of setting one (spec:
+        // "remove-* thì xoá phần tử luôn, không highlight").
+        set((state) => {
+          const next = { ...state.opHighlights };
+          switch (effectiveOp.op) {
+            case 'add-node':
+              next[effectiveOp.node.id] = { kind: 'added', nonce: nextOpHighlightNonce() };
+              break;
+            case 'update-node':
+            case 'move-node':
+              next[effectiveOp.nodeId] = { kind: 'updated', nonce: nextOpHighlightNonce() };
+              break;
+            case 'add-edge':
+              next[effectiveOp.edge.id] = { kind: 'edge-added', nonce: nextOpHighlightNonce() };
+              break;
+            case 'remove-node':
+              delete next[effectiveOp.nodeId];
+              break;
+            case 'remove-edge':
+              delete next[effectiveOp.edgeId];
+              break;
+          }
+          return { opHighlights: next };
+        });
+      },
       onMessage: (data) => {
         if (!isDisplayed()) return;
         set((state) => ({
@@ -384,19 +500,12 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         // Mirrors Toolbar's ✨ Describe flow (SPEC-step16.md §3): the AI's
         // own node positions are only a coarse pre-validation nudge, so
         // re-layout + re-center immediately rather than leaving nodes
-        // overlapping.
+        // overlapping. Also the authoritative reconcile (SPEC-step23.md §4):
+        // `adoptWorkflow` here always overwrites whatever `applyOptimisticOp`
+        // built up locally during this turn's `patch-op` events above.
         useFlowStore.getState().adoptWorkflow(data.workflow);
         useFlowStore.getState().autoLayout();
         useFlowStore.getState().requestFitView();
-        // SPEC-step24.md §2 auto-behavior (interim heuristic — SPEC-step25.md
-        // moves this trigger to the turn's *first* patch-op instead of
-        // waiting for the final message): the AI actually changed the
-        // workflow (a non-null changeId) while the layout was chat-only ->
-        // auto-split to 40/60 so the result is visible without a manual
-        // Mode Toggle click.
-        if (data.changeId !== null && get().layoutMode() === 'chat') {
-          get().setSplitRatio(0.4, { animate: true });
-        }
       },
       onError: (data) => {
         if (!isDisplayed()) return;
@@ -426,7 +535,9 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         // turn look idle (Send button reappears, ■ Dừng disappears) while
         // it's still actually streaming server-side.
         if (isDisplayed()) {
-          set({ turnState: 'idle', activeTurnMessageId: null });
+          // SPEC-step26.md §2.3 — every highlight from this turn is done
+          // animating by the time the turn itself is done.
+          set({ turnState: 'idle', activeTurnMessageId: null, opHighlights: {} });
         }
         // The server may have just auto-titled this conversation from its
         // first message (routes/conversations.ts §4.6) — refresh the list

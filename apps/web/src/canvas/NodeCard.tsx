@@ -40,6 +40,7 @@ import { useRef, useState, type CSSProperties } from 'react';
 import { editNodeWithInstruction } from '../api/client.ts';
 import type { NodeState, PortType } from '../api/types.ts';
 import { Preview } from '../preview/Preview.tsx';
+import { useChatStore } from '../store/chat.ts';
 import { useFlowStore } from '../store/flow.ts';
 import { Badge } from '../ui/Badge.tsx';
 import { Button } from '../ui/Button.tsx';
@@ -145,6 +146,13 @@ export function NodeCard({ data, selected, dragging }: NodeProps<FlowNode>) {
   const isForced = useFlowStore((s) => s.forceNodeIds.includes(node.id));
   const showNodePreviews = useFlowStore((s) => s.showNodePreviews);
   const requestScrollToNode = useFlowStore((s) => s.requestScrollToNode);
+  // SPEC-step26.md §2.3/§3 — this turn's optimistic-apply highlight for this
+  // node (`add-node`→'added', `update-node`/`move-node`→'updated'), cleared
+  // by store/chat.ts's onDone. Read directly off the chat store (not
+  // threaded through FlowCanvas's own `data` prop) since it's transient
+  // animation-only state, unrelated to the workflow JSON this card actually
+  // renders.
+  const highlight = useChatStore((s) => s.opHighlights[node.id]);
 
   const [showEdit, setShowEdit] = useState(false);
   // SPEC-step18.md §5.3 (post-review fix): anchors the ✨ edit Popover.
@@ -205,6 +213,13 @@ export function NodeCard({ data, selected, dragging }: NodeProps<FlowNode>) {
   if (!isError) cardClassName += selected ? ' shadow-hard-8' : ' shadow-hard-5';
   if (state === 'pending' || state === undefined) cardClassName += ' opacity-90';
   if (state === 'skipped') cardClassName += ' opacity-55';
+  // SPEC-step26.md §3 — one-shot AI-patch-op animations: `ff-node-pop`
+  // (scale+opacity "đóng dấu" materialize) for a just-`add-node`'d node,
+  // `ff-node-flash` (border flash) for `update-node`/`move-node`. Both
+  // classes are neutralized under `prefers-reduced-motion` by index.css's
+  // existing global `*`-selector rule — no extra gating needed here.
+  if (highlight?.kind === 'added') cardClassName += ' ff-node-pop';
+  if (highlight?.kind === 'updated') cardClassName += ' ff-node-flash';
 
   const cardStyle: CSSProperties = {};
   if (isError) {
@@ -224,6 +239,17 @@ export function NodeCard({ data, selected, dragging }: NodeProps<FlowNode>) {
 
   return (
     <div
+      // SPEC-step26.md §3 — "key bằng nonce để re-trigger được": a nonce
+      // bump (the same node highlighted again — e.g. two consecutive turns
+      // both `update-node` this id) forces React to unmount+remount this
+      // element even though its animation *class name* may be unchanged
+      // (`ff-node-flash` both times), which is what makes the CSS animation
+      // actually replay rather than silently no-op (a class the browser
+      // already considers "applied" doesn't restart on its own). Harmless
+      // when it fires: NodeCard's own hooks (useState/useRef above) live on
+      // this component's own fiber, not this div, so remounting only resets
+      // this div's DOM subtree (Handles/Popover re-register, idempotently).
+      key={highlight ? `hl-${highlight.nonce}` : 'base'}
       data-testid="node-card"
       data-node-id={node.id}
       data-state={runState?.state ?? 'pending'}

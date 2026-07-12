@@ -11,6 +11,7 @@ import type {
   NodeRunRecord,
   NodeSpec,
   NodeState,
+  PatchOp,
   PortValue,
   RunStatus,
   UnifiedCatalog,
@@ -22,6 +23,10 @@ import type {
 } from '../api/types.ts';
 import { layoutWorkflow, type NodeSize } from '../canvas/layout.ts';
 import { compatible } from '../canvas/portColors.ts';
+// SPEC-step26.md §2 — same `applyPatch`/`PatchError` the server uses
+// (packages/shared, SPEC-step25.md), reused here for the chat turn's
+// per-op *optimistic* canvas apply (see `applyOptimisticOp` below).
+import { applyPatch, PatchError } from 'shared';
 
 export interface NodeRunUiState {
   state: NodeState;
@@ -129,6 +134,29 @@ export interface FlowState {
    * — `loadWorkflow` itself is now just `getWorkflow` + this.
    */
   adoptWorkflow(workflow: Workflow): void;
+  /**
+   * SPEC-step26.md §2 — `store/chat.ts`'s `onPatchOp` handler applies each
+   * streamed-in `PatchOp` optimistically via this setter *as the AI turn is
+   * still running*, so the canvas materializes node-by-node instead of only
+   * ever snapping to the final result. Deliberately does NOT set `dirty`:
+   * unlike every other mutator in this store, this mirrors a change the
+   * server has *already* persisted server-side (the turn's `message` SSE
+   * event always follows up with the full authoritative workflow — see
+   * `sendMessage`'s `onMessage` handler in store/chat.ts — and that
+   * reconcile always wins over this optimistic copy per SPEC-step23.md
+   * §4's rule) — flagging `dirty` here would make the toolbar think there's
+   * a *local, unsaved* edit and offer to overwrite the very workflow the
+   * server just produced.
+   *
+   * A `PatchError` (e.g. the op references a node/edge id an EARLIER op in
+   * the same turn was supposed to create, but that earlier op itself got
+   * skipped for the same reason) is caught and swallowed here — console.warn
+   * only, no throw — since the turn's final `message` event reconciles the
+   * real state regardless; the canvas just silently skips animating that one
+   * intermediate step. Returns whether the op actually applied so the caller
+   * knows whether to also record a highlight for it.
+   */
+  applyOptimisticOp(op: PatchOp): boolean;
   loadWorkflow(id: string): Promise<void>;
   saveWorkflow(): Promise<void>;
   /** Not from spec §3's action list verbatim, but selectedNodeId needs a setter for the canvas/panels built in the next step. */
@@ -355,6 +383,20 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       rightTab: 'params',
       scrollToNodeId: null,
     });
+  },
+
+  applyOptimisticOp(op) {
+    try {
+      const workflow = applyPatch<Workflow>(get().workflow, [op]);
+      set({ workflow });
+      return true;
+    } catch (err) {
+      if (err instanceof PatchError) {
+        console.warn('[flow] optimistic patch-op skipped:', err.message);
+        return false;
+      }
+      throw err;
+    }
   },
 
   async loadWorkflow(id) {
