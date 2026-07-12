@@ -9,6 +9,7 @@ import cors from '@fastify/cors';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { findRepoRoot } from './config.js';
+import { backfillConversations } from './db/backfill.js';
 import { openDb, SqliteCacheStore, SqliteRunStore } from './db/sqlite.js';
 import { WorkflowsRepo } from './db/workflows.js';
 import { Engine, WorkflowValidationError } from './engine/executor.js';
@@ -67,6 +68,15 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   const workflowsRepo = new WorkflowsRepo(db);
 
   const app = Fastify({ logger: opts.logger ?? false });
+
+  // SPEC-step20.md §4 / DESIGN-ai-native.md §8: idempotent migration for
+  // workflows that predate the conversations table (11 samples + anything
+  // hand-created) — gives each one a conversation so it isn't invisible to
+  // the future ConversationRail.
+  const backfilledCount = backfillConversations(db);
+  if (backfilledCount > 0) {
+    app.log.info(`[backfill] tạo ${backfilledCount} conversation cho workflow mồ côi`);
+  }
 
   await app.register(cors, { origin: true });
   await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });

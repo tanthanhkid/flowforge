@@ -24,6 +24,23 @@ interface WorkflowRow {
   updated_at: number | null;
 }
 
+/**
+ * Thrown by saveVersioned() (SPEC-step20.md §3.4) when the caller's
+ * expectedVersion doesn't match the workflow's current version — the
+ * optimistic-concurrency guard against a chat turn overwriting a manual
+ * edit (or vice versa) made while it was in flight. Carries the actual
+ * current version so the caller can decide whether to retry/rebase.
+ */
+export class VersionConflictError extends Error {
+  readonly currentVersion: number;
+
+  constructor(currentVersion: number) {
+    super(`Version conflict: current version is ${currentVersion}`);
+    this.name = 'VersionConflictError';
+    this.currentVersion = currentVersion;
+  }
+}
+
 export class WorkflowsRepo {
   constructor(
     private readonly db: Database.Database,
@@ -80,5 +97,58 @@ export class WorkflowsRepo {
 
   delete(id: string): void {
     this.db.prepare(`DELETE FROM workflows WHERE id = ?`).run(id);
+  }
+
+  getVersion(id: string): number | undefined {
+    const row = this.db.prepare(`SELECT version FROM workflows WHERE id = ?`).get(id) as
+      | { version: number }
+      | undefined;
+    return row?.version;
+  }
+
+  getWithVersion(id: string): { workflow: Workflow; version: number } | undefined {
+    const row = this.db.prepare(`SELECT json, version FROM workflows WHERE id = ?`).get(id) as
+      | { json: string; version: number }
+      | undefined;
+    if (!row) return undefined;
+    return { workflow: JSON.parse(row.json) as Workflow, version: row.version };
+  }
+
+  /**
+   * Upsert that bumps `version` by 1 on every successful write (SPEC-step20.md
+   * §3.4) — a workflow that doesn't exist yet is treated as version 0.
+   * When `expectedVersion` is given and doesn't match the current version,
+   * throws VersionConflictError and leaves the DB untouched (the whole
+   * check + write runs inside a single better-sqlite3 transaction, which
+   * rolls back automatically on a thrown error). `upsert()`/`create()`
+   * above are untouched and never bump version, so existing routes built
+   * on them keep their current semantics.
+   */
+  saveVersioned(workflow: Workflow, expectedVersion?: number): number {
+    const run = this.db.transaction(() => {
+      const currentRow = this.db.prepare(`SELECT version FROM workflows WHERE id = ?`).get(workflow.id) as
+        | { version: number }
+        | undefined;
+      const currentVersion = currentRow?.version ?? 0;
+      if (expectedVersion !== undefined && expectedVersion !== currentVersion) {
+        throw new VersionConflictError(currentVersion);
+      }
+
+      const nextVersion = currentVersion + 1;
+      const now = this.now();
+      this.db
+        .prepare(
+          `INSERT INTO workflows (id, name, json, created_at, updated_at, version)
+           VALUES (@id, @name, @json, @now, @now, @nextVersion)
+           ON CONFLICT (id) DO UPDATE SET
+             name = excluded.name,
+             json = excluded.json,
+             updated_at = excluded.updated_at,
+             version = excluded.version`,
+        )
+        .run({ id: workflow.id, name: workflow.name, json: JSON.stringify(workflow), now, nextVersion });
+      return nextVersion;
+    });
+    return run();
   }
 }

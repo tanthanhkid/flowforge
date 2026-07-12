@@ -25,6 +25,7 @@ import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSyn
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findRepoRoot } from '../src/config.js';
+import { backfillConversations } from '../src/db/backfill.js';
 import { openDb } from '../src/db/sqlite.js';
 import { WorkflowsRepo } from '../src/db/workflows.js';
 import { validateWorkflow } from '../src/engine/schema.js';
@@ -122,11 +123,18 @@ function main(): void {
     seeded.push(result.workflow.id);
   }
 
+  // SPEC-step20.md §4: give every seeded sample a conversation right away
+  // (don't rely on the server-startup migration for the first seed run).
+  const backfilledCount = backfillConversations(db);
+
   db.close();
 
   console.log(`seed-samples: đã seed ${seeded.length} workflow mẫu vào ${dbPath}:`);
   for (const id of seeded) {
     console.log(`  - ${id}`);
+  }
+  if (backfilledCount > 0) {
+    console.log(`seed-samples: đã tạo ${backfilledCount} conversation cho workflow mẫu`);
   }
 }
 

@@ -8,8 +8,8 @@
 2. **Mọi việc viết code phải delegate cho subagent chạy Sonnet 5**:
    - Agent tool: `model: "sonnet"`
    - Workflow `agent()`: `opts.model: 'sonnet'`
-3. Review agent chạy model mặc định (Fable) — đó là công việc orchestration/quality-control, không phải implementation.
-4. **Bước verify (adversarial verification của findings) dùng Sonnet** (`model: 'sonnet'`) — user đổi từ Opus sang Sonnet 2026-07-10 (Opus hay kẹt session limit). Tóm lại: mọi subagent delegate đều là Sonnet, trừ review panel chạy model mặc định (Fable).
+3. **Review agent chạy Opus** (`model: 'opus'`) — user đổi từ Fable (model mặc định) sang Opus 2026-07-12.
+4. **Bước verify (adversarial verification của findings) dùng Sonnet** (`model: 'sonnet'`) — user đổi từ Opus sang Sonnet 2026-07-10 (Opus hay kẹt session limit). Tóm lại: mọi subagent delegate đều là Sonnet, trừ review panel chạy Opus.
 5. Spec, tài liệu thiết kế, CLAUDE.md, memory: Fable viết trực tiếp được (đây là artifact orchestration).
 
 ## Tech stack (bắt buộc)
@@ -85,7 +85,19 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
 18. ✅ Redesign toàn bộ web "Thô Mộc Nổi Loạn" (neo-brutalist, user chọn từ 4 đề xuất) — design tokens @theme, `ui/` primitives, font Archivo subset tiếng Việt self-host, + 8 fix UX (onboarding canvas trống, minimap hiện node — root cause React Flow v12 cần `initialWidth/Height` trên user-node, fit-view sau Sắp xếp, popover portal thoát overflow, bug tab Kết quả, panOnScroll 2 ngón touchpad…) — spec: `docs/SPEC-step18.md`
 19. ✅ Catalog model ĐỘNG từ API fal.ai (~1.400 model, 35 trang keyless) + OpenRouter (345) — parser giá từ chuỗi markdown fal, tier THEO GIÁ (💎/✅/💸/❓ ngưỡng trong `catalog/live/`), cache SQLite 24h + stale-while-revalidate, `CATALOG_LIVE=0` cho test/e2e (không network), 48 preset cũ thành ⭐ featured, picker combobox search + badge MỚI + ARIA/keyboard + luôn giữ "Tự nhập" — spec: `docs/SPEC-step19.md`
 
-Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 335 server + 158 web + 13 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên.
+**Redesign AI-native "Copilot Song Song"** (2026-07-12, user chọn từ 2 đề xuất qua judge panel — thiết kế đầy đủ: `docs/DESIGN-ai-native.md`, Phần I authoritative): chat pane + canvas luôn cùng màn hình, AI stream từng patch-op qua SSE, mọi thay đổi (AI + tay) là PatchOp ghi vào change log. Lộ trình 9 bước = steps 20–28:
+
+20. ✅ Nền dữ liệu: 3 bảng mới (`conversations` 1-1 workflow, `messages`, `workflow_changes` kèm `snapshot_after` cho revert), cột `workflows.version` + `ensureColumn` migration, 3 repo mới + `saveVersioned`/`VersionConflictError` (optimistic concurrency), backfill idempotent cho workflow mồ côi (server startup + seed) — spec: `docs/SPEC-step20.md`
+21. ⬜ `agent/chatTurn.ts` + `changeDigest.ts` + op `move-node` + retry version-conflict
+22. ⬜ SSE ChatTurnManager + routes conversations/messages/changes/revert (+409)
+23. ⬜ ConversationRail + ChatPane thay modal WorkflowList
+24. ⬜ SplitDivider + Mode Toggle (Chat|Chia đôi|Canvas) + refactor App.tsx
+25. ⬜ Nối SSE streaming + animation canvas theo op
+26. ⬜ Auto-log thay đổi tay + tab Lịch sử + nút Khôi phục
+27. ⬜ `packages/shared` — tách `applyPatch` dùng chung FE/BE
+28. ⬜ E2E free-tier luồng chat + revert + version-conflict (mock OpenRouter)
+
+Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 374 server + 158 web + 13 e2e tests.** Đang làm: lộ trình AI-native ở trên, vẫn theo luật orchestration.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 

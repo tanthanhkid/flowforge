@@ -10,12 +10,62 @@ CREATE TABLE IF NOT EXISTS node_runs (run_id TEXT, node_id TEXT, state TEXT NOT 
 CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, node_type TEXT, outputs_json TEXT NOT NULL, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS catalog_cache (provider TEXT PRIMARY KEY, fetched_at INTEGER, payload TEXT);
+
+CREATE TABLE IF NOT EXISTS conversations (
+  id TEXT PRIMARY KEY,
+  workflow_id TEXT NOT NULL UNIQUE,      -- quan hệ 1-1 bắt buộc với workflows.id
+  title TEXT NOT NULL DEFAULT '',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  last_seen_change_id INTEGER            -- con trỏ digest: AI đã "đọc" tới change nào; NULL = chưa turn nào
+);
+CREATE INDEX IF NOT EXISTS idx_conversations_updated ON conversations(updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS messages (
+  id TEXT PRIMARY KEY,
+  conversation_id TEXT NOT NULL,
+  role TEXT NOT NULL,                    -- 'user' | 'assistant'
+  content TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'done',   -- 'pending' | 'streaming' | 'done' | 'error'
+  error TEXT,
+  change_id INTEGER,                     -- workflow_changes.id nếu turn này tạo ra change (NULL nếu chỉ trả lời)
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id, created_at);
+
+CREATE TABLE IF NOT EXISTS workflow_changes (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  workflow_id TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  source TEXT NOT NULL,                  -- 'ai' | 'user'
+  scope TEXT NOT NULL,                   -- 'structural' | 'cosmetic'
+  message_id TEXT,                       -- set khi source='ai'
+  ops_json TEXT NOT NULL,                -- PatchOp[] (vocabulary chung — bước 21 thêm op move-node)
+  summary TEXT NOT NULL,                 -- 1 dòng tiếng Việt human-readable
+  snapshot_after TEXT NOT NULL,          -- full Workflow JSON NGAY SAU khi apply — phục vụ revert đúng 100%
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_changes_workflow ON workflow_changes(workflow_id, id);
+CREATE INDEX IF NOT EXISTS idx_changes_conversation ON workflow_changes(conversation_id, id);
 `;
+
+// CREATE TABLE IF NOT EXISTS never adds a column to a table that already
+// exists, so a DB created before SPEC-step20.md added `workflows.version`
+// needs an explicit ALTER TABLE — this converges both a brand-new DB and an
+// existing `data/*.db` onto the same schema without losing any rows.
+function ensureColumn(db: Database.Database, table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  const hasColumn = cols.some((col) => col.name === column);
+  if (!hasColumn) {
+    db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+  }
+}
 
 export function openDb(path: string): Database.Database {
   const db = new Database(path);
   db.pragma('journal_mode = WAL');
   db.exec(SCHEMA_SQL);
+  ensureColumn(db, 'workflows', 'version', 'version INTEGER NOT NULL DEFAULT 0');
   return db;
 }
 
