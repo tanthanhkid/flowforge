@@ -104,19 +104,6 @@ export interface FlowState {
    * still trigger an effect re-run.
    */
   fitViewNonce: number;
-  /**
-   * SPEC-step18.md §5.1/§7.1 — whether Toolbar's "✨ Describe" popover is
-   * open. Lifted out of Toolbar's own local `useState` (post-review fix,
-   * major): the empty-canvas onboarding CTA (FlowCanvas) used to reach into
-   * Toolbar's private state by `document.querySelector('[data-testid=
-   * "describe-btn"]').click()` — a raw DOM click on a *toggle* button, so
-   * clicking the CTA while the user had already opened Describe from the
-   * Toolbar itself silently *closed* it instead of opening it. With the
-   * state here, the CTA can call `openDescribe()` (idempotent "make sure
-   * it's open") while Toolbar's own button keeps its toggle behavior via
-   * `toggleDescribe()`.
-   */
-  describeOpen: boolean;
 
   loadRegistry(): Promise<void>;
   /** See `modelCatalog` above. */
@@ -228,12 +215,6 @@ export interface FlowState {
   autoLayout(): void;
   /** See `fitViewNonce` above. */
   requestFitView(): void;
-  /** See `describeOpen` above — Toolbar's own ✨ Describe button (flips open/closed). */
-  toggleDescribe(): void;
-  /** See `describeOpen` above — idempotent "make sure it's open" for the empty-canvas CTA. */
-  openDescribe(): void;
-  /** See `describeOpen` above — used by the popover's own ✕ and after a successful generate. */
-  closeDescribe(): void;
 }
 
 function emptyWorkflow(): Workflow {
@@ -327,7 +308,6 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   scrollToNodeId: null,
   nodeSizes: {},
   fitViewNonce: 0,
-  describeOpen: false,
 
   async loadRegistry() {
     const nodes = await api.getRegistry();
@@ -691,17 +671,5 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
 
   requestFitView() {
     set((state) => ({ fitViewNonce: state.fitViewNonce + 1 }));
-  },
-
-  toggleDescribe() {
-    set((state) => ({ describeOpen: !state.describeOpen }));
-  },
-
-  openDescribe() {
-    set({ describeOpen: true });
-  },
-
-  closeDescribe() {
-    set({ describeOpen: false });
   },
 }));

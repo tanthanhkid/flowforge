@@ -129,6 +129,36 @@ async function runAndWaitForSuccess(
   }
 }
 
+// SPEC-step24.md §7 — the landing layout is chat-only (`splitRatio` inits to
+// 1.0, chat-first) by default on every fresh page load (each test gets its
+// own isolated browser context, so `ff.splitRatio` never carries over from
+// an earlier test) — CanvasPane (Sidebar/palette/node-card/right-panel) is
+// mounted but `visibility: hidden` and effectively 0px wide in that mode, so
+// any test whose FIRST canvas/palette/params interaction is a `.click()`,
+// `.fill()`, or `.toBeVisible()` on something inside it must switch modes
+// first, or Playwright's actionability checks (which require real
+// visibility) time out.
+async function openCanvasMode(page: Page): Promise<void> {
+  await page.getByTestId('mode-canvas').click();
+}
+
+async function openSplitMode(page: Page): Promise<void> {
+  await page.getByTestId('mode-split').click();
+}
+
+/**
+ * A mode change animates `flex-grow` over 300ms (store/chat.ts's
+ * `SPLIT_ANIMATE_MS`, `{ animate: true }` calls) — reading `boundingBox()`
+ * exactly once right after the click can catch it mid-transition. Wrapped
+ * in `expect.poll()` (same pattern `runAndWaitForSuccess` above already
+ * uses for a different kind of eventual consistency) so assertions against
+ * a pane's rendered width wait out the transition instead of racing it.
+ */
+async function paneWidth(locator: import('@playwright/test').Locator): Promise<number> {
+  const box = await locator.boundingBox();
+  return box?.width ?? 0;
+}
+
 /** Opens the JSON view, replaces the textarea with `wf`, clicks Apply, closes the overlay. */
 async function applyWorkflowViaJsonView(page: Page, wf: WorkflowLike): Promise<void> {
   await page.getByTestId('json-view-btn').click();
@@ -146,6 +176,7 @@ async function applyWorkflowViaJsonView(page: Page, wf: WorkflowLike): Promise<v
 test.describe('FlowForge — free tier (utility nodes only)', () => {
   test('1. App load: sidebar shows all 9 node types, toolbar has its buttons', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     for (const type of PALETTE_TYPES) {
       await expect(page.getByTestId(`palette-${type}`)).toBeVisible();
     }
@@ -153,13 +184,16 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await expect(page.getByTestId('validate-btn')).toBeVisible();
     await expect(page.getByTestId('run-btn')).toBeVisible();
     await expect(page.getByTestId('run-force-btn')).toBeVisible();
-    await expect(page.getByTestId('describe-btn')).toBeVisible();
+    await expect(page.getByTestId('mode-chat')).toBeVisible();
+    await expect(page.getByTestId('mode-split')).toBeVisible();
+    await expect(page.getByTestId('mode-canvas')).toBeVisible();
     await expect(page.getByTestId('json-view-btn')).toBeVisible();
     await expect(page.getByTestId('settings-btn')).toBeVisible();
   });
 
   test('2. Add node from palette: clicking a palette entry adds one node-card', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     await expect(page.getByTestId('node-card')).toHaveCount(0);
     await page.getByTestId('palette-input.text').click();
     await expect(page.getByTestId('node-card')).toHaveCount(1);
@@ -167,6 +201,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
   test('3. Params edit: editing a value in ParamsPanel is reflected in the JSON view', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     await page.getByTestId('palette-input.text').click();
     await page.getByTestId('node-card').click();
 
@@ -182,6 +217,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
   test('4. Happy run: sample workflow runs to success with the expected preview text', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     await applyWorkflowViaJsonView(page, sampleWorkflow());
 
     // SPEC-step15.md §5 free-tier assert: a utility-only workflow (no
@@ -206,6 +242,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
   test('5. Cache: a second run shows the cache badge; force-run clears it', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     await applyWorkflowViaJsonView(page, sampleWorkflow());
     await page.getByTestId('save-btn').click();
 
@@ -223,6 +260,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
   test('6. JSON view error: broken JSON shows an inline error and does not touch the store', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     await page.getByTestId('palette-input.text').click();
     await expect(page.getByTestId('node-card')).toHaveCount(1);
 
@@ -241,6 +279,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     page,
   }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     const wf: WorkflowLike = {
       version: 1,
       id: crypto.randomUUID(),
@@ -296,6 +335,10 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await page.getByTestId('chat-rename-input').press('Enter');
     await expect(page.getByTestId('chat-pane').getByText(title)).toBeVisible();
 
+    // Switch to canvas mode (chat is full-width by default) before the
+    // palette clicks below — its buttons are hidden/0px-wide otherwise.
+    await openCanvasMode(page);
+
     // Add 3 nodes directly via the palette rather than round-tripping through
     // the JSON view — this mutates whatever workflow id is *currently*
     // adopted in the store, so there's no separate "read the id back out,
@@ -326,6 +369,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
   test('9. Runs history: the Runs tab lists at least 2 runs; opening an old one shows its states', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     await applyWorkflowViaJsonView(page, sampleWorkflow());
     await page.getByTestId('save-btn').click();
 
@@ -396,6 +440,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     writeFileSync(path.join(artifactsDir, fixtureName), Buffer.from(TINY_PNG_BASE64, 'base64'));
 
     await page.goto('/');
+    await openCanvasMode(page);
     const wf: WorkflowLike = {
       version: 1,
       id: crypto.randomUUID(),
@@ -448,6 +493,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     writeFileSync(mdPath, mdContent, 'utf-8');
 
     await page.goto('/');
+    await openCanvasMode(page);
     const wf: WorkflowLike = {
       version: 1,
       id: crypto.randomUUID(),
@@ -491,6 +537,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     page,
   }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     const wf: WorkflowLike = {
       version: 1,
       id: crypto.randomUUID(),
@@ -570,6 +617,7 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
   // conversation+workflow pair and selects it immediately.
   test('15. ConversationRail: "+ Cuộc trò chuyện mới" adds a new item and clears the canvas', async ({ page }) => {
     await page.goto('/');
+    await openCanvasMode(page);
     await page.getByTestId('palette-input.text').waitFor();
 
     // Not asserting an exact/incremented `conversation-item` count here —
@@ -605,5 +653,90 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await item.getByTestId('conversation-delete-btn').click();
 
     await expect(page.getByTestId('conversation-item').filter({ hasText: title })).toHaveCount(0);
+  });
+
+  // SPEC-step24.md §7 (a) — a fresh app load (isolated browser context, so
+  // `ff.splitRatio` was never persisted) lands on the chat-first landing
+  // hero, full width, with the canvas pane mounted but hidden.
+  test('17. Landing hero: a fresh app load shows chat full-width and hides the canvas pane', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('chat-hero')).toBeVisible();
+    await expect(page.getByTestId('canvas-pane')).toHaveCSS('visibility', 'hidden');
+  });
+
+  // SPEC-step24.md §7 (b) — the 3 Mode Toggle buttons switch the layout;
+  // the canvas pane's visibility (chat-only -> hidden, else -> visible) and
+  // the chat pane's rendered width (~0px in canvas-only mode) both track it.
+  test('18. Mode Toggle: 3 buttons switch the layout; canvas visibility and chat width follow', async ({ page }) => {
+    await page.goto('/');
+    const canvasPane = page.getByTestId('canvas-pane');
+    const chatPane = page.getByTestId('chat-pane');
+
+    await expect(canvasPane).toHaveCSS('visibility', 'hidden');
+
+    await openSplitMode(page);
+    await expect(canvasPane).toHaveCSS('visibility', 'visible');
+    await expect.poll(() => paneWidth(chatPane), { timeout: 2000 }).toBeGreaterThan(100);
+    await expect.poll(() => paneWidth(canvasPane), { timeout: 2000 }).toBeGreaterThan(100);
+
+    await openCanvasMode(page);
+    await expect(canvasPane).toHaveCSS('visibility', 'visible');
+    await expect.poll(() => paneWidth(chatPane), { timeout: 2000 }).toBeLessThan(5);
+
+    await page.getByTestId('mode-chat').click();
+    await expect(canvasPane).toHaveCSS('visibility', 'hidden');
+  });
+
+  // SPEC-step24.md §7 (c) — selecting a conversation whose workflow already
+  // has nodes, while the layout is chat-only, auto-splits to 50/50
+  // (store/chat.ts's `selectConversation` auto-behavior).
+  test('19. Selecting a non-empty conversation from the rail auto-splits the layout', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('new-conversation').click();
+    await openCanvasMode(page);
+    await page.getByTestId('palette-input.text').click();
+    await expect(page.getByTestId('node-card')).toHaveCount(1);
+
+    // selectConversation re-fetches the workflow from the SERVER (`GET
+    // /api/conversations/:id`) — the node added above only exists in the
+    // client store (dirty) until saved, so without this the rail reselect
+    // below would adopt the still-empty server-side workflow and the
+    // auto-split condition (`nodes.length > 0`) would never fire.
+    await page.getByTestId('save-btn').click();
+    await expect(page.getByTestId('save-btn')).toBeDisabled();
+
+    // Back to chat-only, then reselect the very same (now non-empty)
+    // conversation from the rail.
+    await page.getByTestId('mode-chat').click();
+    const canvasPane = page.getByTestId('canvas-pane');
+    await expect(canvasPane).toHaveCSS('visibility', 'hidden');
+
+    const item = page.getByTestId('conversation-item').first();
+    await item.getByRole('button').first().click();
+
+    await expect(canvasPane).toHaveCSS('visibility', 'visible');
+    const chatPane = page.getByTestId('chat-pane');
+    await expect.poll(() => paneWidth(chatPane), { timeout: 2000 }).toBeGreaterThan(100);
+    await expect.poll(() => paneWidth(canvasPane), { timeout: 2000 }).toBeGreaterThan(100);
+  });
+
+  // SPEC-step24.md §7 (d) — ⌘\ (Ctrl+\ works cross-platform, per
+  // store/chat.ts's `metaKey || ctrlKey` guard) cycles chat -> split ->
+  // canvas -> chat.
+  test('20. Keyboard shortcut Ctrl+\\ cycles chat -> split -> canvas -> chat', async ({ page }) => {
+    await page.goto('/');
+    const canvasPane = page.getByTestId('canvas-pane');
+    const chatPane = page.getByTestId('chat-pane');
+    await expect(canvasPane).toHaveCSS('visibility', 'hidden'); // starts chat-only
+
+    await page.keyboard.press('Control+Backslash');
+    await expect(canvasPane).toHaveCSS('visibility', 'visible'); // now split
+
+    await page.keyboard.press('Control+Backslash');
+    await expect(canvasPane).toHaveCSS('visibility', 'visible'); // now canvas-only
+    await expect.poll(() => paneWidth(chatPane), { timeout: 2000 }).toBeLessThan(5);
+
+    await page.keyboard.press('Control+Backslash');
+    await expect(canvasPane).toHaveCSS('visibility', 'hidden'); // back to chat-only
   });
 });

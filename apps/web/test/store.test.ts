@@ -410,32 +410,6 @@ describe('showNodePreviews (SPEC-step9.md §1)', () => {
   });
 });
 
-// SPEC-step18.md §7.1 (post-review fix): describeOpen moved into the store
-// so the empty-canvas CTA can idempotently *open* the ✨ Describe panel
-// instead of DOM-clicking Toolbar's own toggle button (which silently
-// closed it if the user had already opened it from the Toolbar itself).
-describe('describeOpen (SPEC-step18.md §7.1)', () => {
-  it('toggleDescribe flips open/closed', () => {
-    useFlowStore.setState({ describeOpen: false });
-    useFlowStore.getState().toggleDescribe();
-    expect(useFlowStore.getState().describeOpen).toBe(true);
-    useFlowStore.getState().toggleDescribe();
-    expect(useFlowStore.getState().describeOpen).toBe(false);
-  });
-
-  it('openDescribe is idempotent — stays open even if it was already open', () => {
-    useFlowStore.setState({ describeOpen: true });
-    useFlowStore.getState().openDescribe();
-    expect(useFlowStore.getState().describeOpen).toBe(true);
-  });
-
-  it('closeDescribe always closes', () => {
-    useFlowStore.setState({ describeOpen: true });
-    useFlowStore.getState().closeDescribe();
-    expect(useFlowStore.getState().describeOpen).toBe(false);
-  });
-});
-
 describe('rightTab / scrollToNodeId (SPEC-step9.md §1/§2)', () => {
   it('setRightTab sets the active tab', () => {
     useFlowStore.getState().setRightTab('runs');

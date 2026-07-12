@@ -8,6 +8,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CostEstimate, Workflow } from '../src/api/types.ts';
 import { Toolbar } from '../src/panels/Toolbar.tsx';
+import { useChatStore } from '../src/store/chat.ts';
 import { useFlowStore } from '../src/store/flow.ts';
 
 afterEach(() => {
@@ -155,5 +156,38 @@ describe('Toolbar — 🪄 Sắp xếp (SPEC-step16.md §3)', () => {
     // real auto-layout must separate them (same column, different rows).
     expect(nodes.find((n) => n.id === 'a')?.position).not.toEqual(nodes.find((n) => n.id === 'b')?.position);
     expect(useFlowStore.getState().dirty).toBe(true);
+  });
+});
+
+// SPEC-step24.md §5/§6.5 — the "✨ Describe" popover is gone entirely (its
+// job moved to the chat pane); ModeToggle takes its place in the toolbar.
+describe('Toolbar — SPEC-step24.md §5 (Describe removed) / §3 (ModeToggle)', () => {
+  beforeEach(() => {
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ok: true, issues: [] }));
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    resetStore(baseWorkflow);
+    useChatStore.setState({ splitRatio: 1, splitAnimating: false, turnState: 'idle' });
+  });
+
+  it('no longer renders a "✨ Describe" button/popover', () => {
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
+    expect(screen.queryByTestId('describe-btn')).not.toBeInTheDocument();
+    expect(screen.queryByText('✨ Describe')).not.toBeInTheDocument();
+  });
+
+  it('renders the ModeToggle (3 mode buttons)', () => {
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
+    expect(screen.getByTestId('mode-chat')).toBeInTheDocument();
+    expect(screen.getByTestId('mode-split')).toBeInTheDocument();
+    expect(screen.getByTestId('mode-canvas')).toBeInTheDocument();
+  });
+
+  it('every other toolbar button is still present (Run, Save, JSON, Settings, 💰, 🪄)', () => {
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
+    expect(screen.getByTestId('run-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('save-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('json-view-btn')).toBeInTheDocument();
+    expect(screen.getByTestId('cost-estimate')).toBeInTheDocument();
+    expect(screen.getByTestId('auto-layout-btn')).toBeInTheDocument();
   });
 });

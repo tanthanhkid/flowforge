@@ -8,9 +8,14 @@
  * the custom `BrutalEdge` (black outline + colored top layer, dashed while
  * flowing into a `running` node — see BrutalEdge.tsx), a `MiniMap` colored
  * by node category (previously uncustomized — spec's fix #2, "minimap vô
- * hình"), an onboarding overlay on an empty canvas (fix #1) that opens the
- * Toolbar's ✨ Describe panel, and a `fitViewNonce` listener (fix #3, store
- * §4) so the 🪄 Sắp xếp button can re-center the view after laying out.
+ * hình"), an onboarding overlay on an empty canvas (fix #1), and a
+ * `fitViewNonce` listener (fix #3, store §4) so the 🪄 Sắp xếp button can
+ * re-center the view after laying out.
+ *
+ * SPEC-step24.md §5 — the onboarding overlay's CTA no longer opens the
+ * (now-removed) Toolbar "✨ Describe" popover: it switches the layout to
+ * split mode and focuses the chat composer instead (`ChatPane` is the sole
+ * remaining natural-language-to-workflow entry point).
  */
 import {
   Background,
@@ -31,6 +36,7 @@ import {
 import '@xyflow/react/dist/style.css';
 import { useCallback, useEffect, useMemo, useState, type DragEvent } from 'react';
 import type { NodeSpec, PortType } from '../api/types.ts';
+import { useChatStore } from '../store/chat.ts';
 import { useFlowStore } from '../store/flow.ts';
 import { Button } from '../ui/Button.tsx';
 import { BrutalEdge, type BrutalEdgeType } from './BrutalEdge.tsx';
@@ -55,12 +61,13 @@ function FlowCanvasInner() {
   const addEdge = useFlowStore((s) => s.addEdge);
   const addNode = useFlowStore((s) => s.addNode);
   const fitViewNonce = useFlowStore((s) => s.fitViewNonce);
-  // SPEC-step18.md §7.1 (post-review fix): calls the store's idempotent
-  // "make sure it's open" action, not Toolbar's own toggle — previously this
-  // DOM-clicked Toolbar's toggle button directly, so clicking this CTA while
-  // the user had already opened Describe from the Toolbar silently closed it.
-  const openDescribe = useFlowStore((s) => s.openDescribe);
   const nodeSizes = useFlowStore((s) => s.nodeSizes);
+  // SPEC-step24.md §5 — the onboarding CTA's new behavior: switch into
+  // split mode (so the canvas stays visible alongside chat) and focus the
+  // composer, replacing the old Toolbar "✨ Describe" popover this used to
+  // open (see git history for that version).
+  const setSplitRatio = useChatStore((s) => s.setSplitRatio);
+  const requestFocusComposer = useChatStore((s) => s.requestFocusComposer);
 
   const { screenToFlowPosition, fitView } = useReactFlow();
 
@@ -271,7 +278,7 @@ function FlowCanvasInner() {
   );
 
   return (
-    <div className="relative h-full w-full bg-bg" onDragOver={onDragOver} onDrop={onDrop}>
+    <div data-testid="flow-canvas" className="relative h-full w-full bg-bg" onDragOver={onDragOver} onDrop={onDrop}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -305,17 +312,24 @@ function FlowCanvasInner() {
       </ReactFlow>
 
       {workflow.nodes.length === 0 && (
-        // Spec §5.4: "Overlay pointer-events: none trừ nút" — only the ✨
-        // Describe button itself should intercept clicks; everything else
-        // (the card, its text) stays click-through to the canvas below.
+        // Spec §5.4: "Overlay pointer-events: none trừ nút" — only the CTA
+        // button itself should intercept clicks; everything else (the card,
+        // its text) stays click-through to the canvas below.
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
           <div className="flex max-w-sm flex-col items-center gap-3 border-2 border-dashed border-ink bg-paper/90 p-6 text-center shadow-hard-5">
             <p className="font-display text-sm uppercase tracking-wide text-ink">
-              ✨ Mô tả workflow bằng lời — để AI dựng cho bạn
+              💬 Chat với AI để tạo workflow
             </p>
             <span className="pointer-events-auto inline-flex">
-              <Button data-testid="empty-canvas-cta" variant="ai" onClick={openDescribe}>
-                ✨ Describe
+              <Button
+                data-testid="empty-canvas-cta"
+                variant="ai"
+                onClick={() => {
+                  setSplitRatio(0.5, { animate: true });
+                  requestFocusComposer();
+                }}
+              >
+                💬 Chat với AI để tạo workflow
               </Button>
             </span>
             <p className="font-mono-data text-[11px] text-ink-soft">hoặc kéo node từ sidebar trái</p>

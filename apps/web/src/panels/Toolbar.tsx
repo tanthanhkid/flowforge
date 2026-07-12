@@ -1,25 +1,25 @@
 /**
  * Top toolbar (SPEC-step4.md §4): editable workflow name, Save (disabled
  * when !dirty), Validate (issue list, click -> select the offending node),
- * ▶ Run (disabled while running, spinner + status while running), New, and
- * (SPEC-step5.md §6) a "✨ Describe" panel that turns a natural-language
- * description into a whole workflow via POST /api/agent/generate-workflow.
+ * ▶ Run (disabled while running, spinner + status while running), New.
  *
  * SPEC-step18.md §5.1 — re-themed neo-brutalist: groups separated by 2px
- * vertical black dividers (wordmark+name | New·Save | Validate·💰 |
- * Run·⚡Run bỏ cache | 🪄 Sắp xếp·👁 Preview | ✨ Describe | {} JSON | spacer |
+ * vertical black dividers (wordmark+name | Mode Toggle | New·Save |
+ * Validate·💰 | Run·⚡Run bỏ cache | 🪄 Sắp xếp·👁 Preview | {} JSON | spacer |
  * ⚙), built from the shared `ui/` primitives. SPEC-step23.md §7 removed the
  * "Workflows" button/`onOpenWorkflowList` prop — `ConversationRail` (a
  * sibling of this toolbar in `App.tsx`) is the full replacement for the old
- * `WorkflowList.tsx` modal.
+ * `WorkflowList.tsx` modal. SPEC-step24.md §5 removed the "✨ Describe" panel
+ * entirely (its natural-language-to-workflow job is now the chat pane's,
+ * `POST /api/agent/generate-workflow` itself is untouched/still used
+ * elsewhere) and §3 added the `ModeToggle` group.
  */
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
-import { ApiError, generateWorkflowFromDescription } from '../api/client.ts';
-import type { ValidationIssue } from '../api/types.ts';
 import { useFlowStore } from '../store/flow.ts';
 import { Button } from '../ui/Button.tsx';
 import { Popover } from '../ui/Popover.tsx';
 import { Spinner } from '../ui/Spinner.tsx';
+import { ModeToggle } from './ModeToggle.tsx';
 
 /** SPEC-step15.md §3: debounce delay before refreshing the 💰 estimate after a workflow edit. */
 const ESTIMATE_DEBOUNCE_MS = 800;
@@ -82,9 +82,6 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
   const refreshEstimate = useFlowStore((s) => s.refreshEstimate);
   const autoLayout = useFlowStore((s) => s.autoLayout);
   const requestFitView = useFlowStore((s) => s.requestFitView);
-  const showDescribe = useFlowStore((s) => s.describeOpen);
-  const toggleDescribe = useFlowStore((s) => s.toggleDescribe);
-  const closeDescribe = useFlowStore((s) => s.closeDescribe);
 
   const [saving, setSaving] = useState(false);
   const [validating, setValidating] = useState(false);
@@ -95,25 +92,15 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
   // feedback, making Save/Run look like dead buttons.
   const [lastError, setLastError] = useState<string | null>(null);
 
-  // ---- ✨ Describe panel (SPEC-step5.md §6) ------------------------------
-  // `showDescribe`/toggle/close now live in the store (see `describeOpen`
-  // above) — the empty-canvas CTA in FlowCanvas.tsx needs to *open* this
-  // panel without toggling it closed if it's already open.
-  const [description, setDescription] = useState('');
-  const [generating, setGenerating] = useState(false);
-  const [describeError, setDescribeError] = useState<string | null>(null);
-  const [describeIssues, setDescribeIssues] = useState<ValidationIssue[]>([]);
-
   // ---- 💰 cost estimate (SPEC-step15.md §3) ------------------------------
   const [showEstimate, setShowEstimate] = useState(false);
 
-  // Anchors for the 3 portaled popovers below (SPEC-step18.md §5.1 fix,
+  // Anchors for the 2 portaled popovers below (SPEC-step18.md §5.1 fix,
   // post-review critical finding) — Popover.tsx positions itself via
   // `getBoundingClientRect()` on these, not via CSS `absolute` nesting, so
   // it isn't clipped by this header's `overflow-x-auto`.
   const validateBtnWrapRef = useRef<HTMLDivElement>(null);
   const estimateBtnWrapRef = useRef<HTMLDivElement>(null);
-  const describeBtnWrapRef = useRef<HTMLDivElement>(null);
 
   // Debounced refresh (800ms after the workflow's own content last changed,
   // not after every keystroke's render) — silent-fail is handled inside
@@ -128,41 +115,6 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
   }, [workflowJson]);
 
   const isRunning = runStatus === 'running';
-
-  async function handleGenerate(): Promise<void> {
-    // Overwriting an in-progress edit the user hasn't saved yet is
-    // destructive — confirm first (spec §6: "nếu workflow hiện tại dirty
-    // thì confirm trước khi ghi đè").
-    if (dirty && !window.confirm('Workflow hiện tại chưa lưu sẽ bị ghi đè. Tiếp tục?')) {
-      return;
-    }
-    setGenerating(true);
-    setDescribeError(null);
-    setDescribeIssues([]);
-    try {
-      const result = await generateWorkflowFromDescription(description);
-      setWorkflowJson(result.workflow);
-      // SPEC-step16.md §3: run the client's precise auto-layout right after
-      // a successful ✨ generate — the agent's own positions (server
-      // `agent/layout.ts`) are only a coarse pre-validation nudge, not
-      // collision-free against NodeCard's actual fixed-size box, so left
-      // alone the generated graph re-creates the "nodes overlapping, edges
-      // chéo loạn" bug this step fixes. Runs immediately with whatever
-      // fallback sizes are available rather than waiting for nodes to
-      // render/measure first (spec: "không cần đợi đo").
-      autoLayout();
-      closeDescribe();
-      setDescription('');
-    } catch (err) {
-      if (err instanceof ApiError && err.status === 422) {
-        setDescribeIssues(err.issues ?? []);
-      } else {
-        setDescribeError(errorMessage(err));
-      }
-    } finally {
-      setGenerating(false);
-    }
-  }
 
   async function handleSave(): Promise<void> {
     setSaving(true);
@@ -250,6 +202,11 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
         aria-label="Tên workflow"
         className="h-9 w-48 shrink-0 border-2 border-ink bg-paper px-2 text-xs font-bold text-ink shadow-hard-2 placeholder:font-normal placeholder:text-ink-soft focus:border-cat-video focus:shadow-[2px_2px_0_var(--color-cat-video)] focus:outline-none"
       />
+
+      <ToolbarDivider />
+
+      {/* Group 1b: Mode Toggle (SPEC-step24.md §3) — always visible, not a popover. */}
+      <ModeToggle />
 
       <ToolbarDivider />
 
@@ -382,52 +339,6 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
       </Button>
 
       <ToolbarDivider />
-
-      {/* Group 6: ✨ Describe */}
-      <div ref={describeBtnWrapRef} className="relative shrink-0">
-        <Button type="button" data-testid="describe-btn" variant="ai" onClick={toggleDescribe}>
-          ✨ Describe
-        </Button>
-        <span className="pointer-events-none absolute -right-2 -top-2 -rotate-[10deg] border-2 border-ink bg-cat-image px-1 py-0.5 font-mono-data text-[8px] font-black text-ink">
-          AI
-        </span>
-        {showDescribe && (
-          <Popover anchorRef={describeBtnWrapRef} className="w-80 p-3">
-            <div className="mb-2 flex items-center justify-between gap-2">
-              <span className="font-mono-data text-xs font-bold text-ink">Tạo workflow từ mô tả</span>
-              <PopoverCloseButton onClick={closeDescribe} />
-            </div>
-            <textarea
-              data-testid="describe-input"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Mô tả workflow bạn muốn tạo…"
-              rows={4}
-              className="mb-2 w-full border-2 border-ink bg-paper p-1.5 text-xs font-medium text-ink placeholder:text-ink-soft focus:border-cat-video focus:shadow-[2px_2px_0_var(--color-cat-video)] focus:outline-none"
-            />
-            <Button
-              type="button"
-              data-testid="describe-generate"
-              variant="primary"
-              onClick={() => void handleGenerate()}
-              disabled={generating || description.trim().length < 3}
-            >
-              {generating && <Spinner label="Đang tạo" />}
-              {generating ? 'Generating…' : 'Generate'}
-            </Button>
-            {describeError && <p className="mt-1 text-xs font-medium text-status-error">{describeError}</p>}
-            {describeIssues.length > 0 && (
-              <ul className="mt-1 flex flex-col gap-1">
-                {describeIssues.map((issue, i) => (
-                  <li key={`${issue.code}-${i}`} className="text-xs font-medium text-status-error">
-                    [{issue.code}] {issue.message}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </Popover>
-        )}
-      </div>
 
       {runStatus && (
         <span className="shrink-0 font-mono-data text-[11px] font-bold text-ink-soft">status: {runStatus}</span>

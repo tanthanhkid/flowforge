@@ -9,7 +9,8 @@
  * category's saturated bg needs black, same AA rule as NodeCard's header);
  * each node is a 2px-bordered "sticker" that tilts -1.5° on hover ("nhặt
  * sticker" feel); a dashed-border tip banner closes out the list pointing at
- * ✨ Describe as the alternative to manual drag-and-drop.
+ * chatting with the AI (ChatPane) as the alternative to manual drag-and-drop
+ * (SPEC-step24.md §5 replaced the old "✨ Describe" toolbar popover with it).
  */
 import type { DragEvent } from 'react';
 import type { NodeSpec } from '../api/types.ts';
@@ -86,7 +87,7 @@ export function Sidebar() {
         </div>
       ))}
       <div className="m-2 mt-auto border-2 border-dashed border-ink bg-bg p-2 text-[11px] font-bold leading-snug text-ink">
-        💡 Kéo node vào canvas hoặc bấm ✨ Describe để AI dựng workflow
+        💡 Kéo node vào canvas hoặc chat với AI để dựng workflow
       </div>
     </aside>
   );

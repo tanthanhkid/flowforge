@@ -45,6 +45,9 @@ function resetStore(overrides: Partial<ReturnType<typeof useChatStore.getState>>
     chatErrorNonce: 0,
     railCollapsed: false,
     search: '',
+    splitRatio: 1,
+    splitAnimating: false,
+    focusComposerNonce: 0,
     ...overrides,
   });
 }
@@ -57,7 +60,52 @@ beforeEach(() => {
 const workflow: Workflow = { version: 1, id: 'wf1', name: 'x', nodes: [], edges: [] };
 
 describe('ChatPane — empty states', () => {
-  it('no active conversation: shows the headline + a create button', async () => {
+  // SPEC-step24.md §4 — the app's actual "trang chủ": no conversation
+  // selected at all, at the default chat-first splitRatio (1.0). Renders
+  // the pure landing hero (headline + composer + chips) rather than a bare
+  // "create a conversation" button — typing + sending claims a conversation
+  // on the fly (DESIGN-ai-native.md §II.2).
+  it('no active conversation, chat mode (default): shows the landing hero; sending creates a conversation on the fly', async () => {
+    vi.mocked(api.createConversation).mockResolvedValue({
+      id: 'c1',
+      workflowId: 'wf1',
+      title: '',
+      createdAt: 1,
+      updatedAt: 1,
+      lastSeenChangeId: null,
+    });
+    vi.mocked(api.getConversation).mockResolvedValue({
+      conversation: { id: 'c1', workflowId: 'wf1', title: '', createdAt: 1, updatedAt: 1, lastSeenChangeId: null },
+      messages: [],
+      workflow,
+      version: 0,
+    });
+    vi.mocked(api.postChatMessage).mockResolvedValue({ userMessageId: 'u1', assistantMessageId: 'a1' });
+    vi.mocked(api.openTurnEvents).mockImplementation(() => vi.fn());
+
+    render(<ChatPane />);
+    expect(screen.getByTestId('chat-hero')).toBeInTheDocument();
+    expect(screen.getByText('Mô tả workflow bạn muốn tạo')).toBeInTheDocument();
+    // The hero's own chip row (spec: "chip gợi ý bên dưới").
+    expect(screen.getAllByTestId('chat-suggestion-chip')).toHaveLength(3);
+
+    fireEvent.change(screen.getByTestId('chat-input'), { target: { value: 'Tạo video TikTok' } });
+    fireEvent.click(screen.getByTestId('chat-send'));
+
+    await vi.waitFor(() => {
+      expect(api.createConversation).toHaveBeenCalled();
+    });
+    await vi.waitFor(() => {
+      expect(api.postChatMessage).toHaveBeenCalledWith('c1', 'Tạo video TikTok');
+    });
+    expect(useChatStore.getState().activeConversationId).toBe('c1');
+  });
+
+  // SPEC-step24.md §4 — too narrow for the full hero treatment (e.g. the
+  // user is in split mode with no conversation selected, perhaps after
+  // deleting the active one) — falls back to the pre-step24 plain prompt.
+  it('no active conversation, non-chat mode: falls back to the plain "choose or create" prompt', async () => {
+    resetStore({ splitRatio: 0.5 });
     vi.mocked(api.createConversation).mockResolvedValue({
       id: 'c1',
       workflowId: 'wf1',
@@ -75,6 +123,7 @@ describe('ChatPane — empty states', () => {
 
     render(<ChatPane />);
     expect(screen.getByText('Chọn hoặc tạo cuộc trò chuyện để bắt đầu')).toBeInTheDocument();
+    expect(screen.queryByTestId('chat-hero')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByTestId('chat-empty-new-conversation'));
     await vi.waitFor(() => {

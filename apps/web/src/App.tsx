@@ -1,44 +1,35 @@
 /**
- * Layout (SPEC-step4.md §2/§4, SPEC-step23.md §7): top Toolbar, then
- * ConversationRail | ChatPane | Sidebar | Canvas | right panel (Params/Runs/
- * Kết quả tabs — SPEC-step9.md §2 lifted the tab selection into the store so
- * `openRun` can auto-switch to "Kết quả"). INTERIM layout — ConversationRail
- * and ChatPane are fixed-width columns here; SPEC-step24 replaces this with
- * a real SplitDivider/Mode Toggle. The old `WorkflowList` modal is gone —
- * ConversationRail is its full replacement (SPEC-step23.md §7).
- *
- * SPEC-step18.md §5.5 — right-panel tabs restyled as "bìa hồ sơ" (folder
- * tabs): 2px black border box, active tab bg-accent with its bottom border
- * recolored to match (rather than removed outright, which would shift tab
- * height under Tailwind's border-box sizing) so it reads as fused with the
- * panel body directly beneath it, no dividing line.
+ * Layout (SPEC-step4.md §2/§4, SPEC-step24.md §4): top Toolbar, then
+ * ConversationRail | ChatPane | SplitDivider | CanvasPane. ChatPane and
+ * CanvasPane always occupy the SAME viewport — the only difference between
+ * "chat", "split" and "canvas" mode is `useChatStore`'s `splitRatio`
+ * (`ChatPane`/`CanvasPane` each read it themselves and size their own root
+ * via `flex-grow`; this file only owns the row they sit in, the global
+ * ⌘\ / ⌘⇧\ shortcut, and the two overlay panels — JsonView/SettingsPage —
+ * that are unrelated to the split). Replaces SPEC-step23.md §7's interim
+ * fixed-width ConversationRail+ChatPane layout. The old `WorkflowList` modal
+ * remains gone — ConversationRail is its full replacement.
  */
 import { useEffect, useState } from 'react';
-import { FlowCanvas } from './canvas/FlowCanvas.tsx';
-import { Sidebar } from './canvas/Sidebar.tsx';
+import { CanvasPane } from './panels/CanvasPane.tsx';
 import { ChatPane } from './panels/ChatPane.tsx';
 import { ConversationRail } from './panels/ConversationRail.tsx';
 import { JsonView } from './panels/JsonView.tsx';
-import { ParamsPanel } from './panels/ParamsPanel.tsx';
-import { ResultsPanel } from './panels/ResultsPanel.tsx';
-import { RunsPanel } from './panels/RunsPanel.tsx';
 import { SettingsPage } from './panels/SettingsPage.tsx';
+import { SplitDivider } from './panels/SplitDivider.tsx';
 import { Toolbar } from './panels/Toolbar.tsx';
-import { useChatStore } from './store/chat.ts';
+import { layoutModeFromRatio, modeRatio, nextMode, useChatStore } from './store/chat.ts';
 import { useFlowStore } from './store/flow.ts';
 
-/** "Bìa hồ sơ" tab classes (spec §5.5) — see file header for the fused-border trick. */
-function rightTabClass(active: boolean): string {
-  const base =
-    'flex-1 border-r-2 border-b-[3px] border-ink px-2 py-2.5 text-center font-display text-[11px] uppercase tracking-wide text-ink transition-colors last:border-r-0';
-  return active ? `${base} bg-accent border-b-accent` : `${base} bg-bg hover:bg-paper`;
+/** Native DOM keydown target check — the shortcut below must not fire while the user is typing (SPEC-step24.md §2). */
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false;
+  return target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
 }
 
 function App() {
   const loadRegistry = useFlowStore((state) => state.loadRegistry);
   const loadCatalog = useFlowStore((state) => state.loadCatalog);
-  const rightTab = useFlowStore((state) => state.rightTab);
-  const setRightTab = useFlowStore((state) => state.setRightTab);
   const loadConversations = useChatStore((state) => state.loadConversations);
   const [showJsonView, setShowJsonView] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -55,6 +46,25 @@ function App() {
     });
   }, [loadRegistry, loadCatalog, loadConversations]);
 
+  // SPEC-step24.md §2 — ⌘\ cycles chat → split → canvas → chat; ⌘⇧\ reverses
+  // it. Registered globally (not on a specific pane) so it works regardless
+  // of where focus currently is, except inside an editable field (typing a
+  // literal backslash must keep working there).
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key !== '\\') return;
+      if (!(event.metaKey || event.ctrlKey)) return;
+      if (isEditableTarget(event.target)) return;
+      event.preventDefault();
+      const dir = event.shiftKey ? -1 : 1;
+      const current = layoutModeFromRatio(useChatStore.getState().splitRatio);
+      const next = nextMode(current, dir);
+      useChatStore.getState().setSplitRatio(modeRatio(next), { animate: true });
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-ink">
       <Toolbar onOpenJsonView={() => setShowJsonView(true)} onOpenSettings={() => setShowSettings(true)} />
@@ -62,40 +72,8 @@ function App() {
       <div className="flex min-h-0 flex-1">
         <ConversationRail />
         <ChatPane />
-        <Sidebar />
-
-        <main className="min-w-0 flex-1">
-          <FlowCanvas />
-        </main>
-
-        <aside data-testid="right-panel" className="flex w-80 shrink-0 flex-col border-l-[3px] border-ink bg-paper">
-          <div className="flex shrink-0">
-            <button type="button" onClick={() => setRightTab('params')} className={rightTabClass(rightTab === 'params')}>
-              Params
-            </button>
-            <button
-              type="button"
-              data-testid="runs-tab"
-              onClick={() => setRightTab('runs')}
-              className={rightTabClass(rightTab === 'runs')}
-            >
-              Runs
-            </button>
-            <button
-              type="button"
-              data-testid="results-tab"
-              onClick={() => setRightTab('results')}
-              className={rightTabClass(rightTab === 'results')}
-            >
-              Kết quả
-            </button>
-          </div>
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {rightTab === 'params' && <ParamsPanel />}
-            {rightTab === 'runs' && <RunsPanel />}
-            {rightTab === 'results' && <ResultsPanel />}
-          </div>
-        </aside>
+        <SplitDivider />
+        <CanvasPane />
       </div>
 
       {showJsonView && <JsonView onClose={() => setShowJsonView(false)} />}

@@ -24,13 +24,16 @@ test.describe.serial('FlowForge — real tier (paid provider calls, E2E_REAL=1 o
     await page.mouse.click(5, 5);
   }
 
+  // SPEC-step24.md §5 — the old Toolbar "✨ Describe" panel this test used
+  // to drive is gone; the chat pane (ChatPane) is now the sole natural-
+  // language-to-workflow entry point, driven by the same real chatTurn
+  // agent loop (POST /api/conversations/:id/messages -> SSE `message` with
+  // the generated workflow).
   test('1. Agent generate: description -> workflow with llm.generate + vbee.tts', async ({ page }) => {
     await page.goto('/');
-    await page.getByTestId('describe-btn').click();
-    await page
-      .getByTestId('describe-input')
-      .fill('Viết đúng 1 câu chào ngắn gọn rồi chuyển thành giọng nói nữ');
-    await page.getByTestId('describe-generate').click();
+    await page.getByTestId('new-conversation').click();
+    await page.getByTestId('chat-input').fill('Viết đúng 1 câu chào ngắn gọn rồi chuyển thành giọng nói nữ');
+    await page.getByTestId('chat-send').click();
 
     await expect(page.getByTestId('node-card')).not.toHaveCount(0, { timeout: 120_000 });
     const cardCount = await page.getByTestId('node-card').count();
