@@ -173,6 +173,23 @@ async function applyWorkflowViaJsonView(page: Page, wf: WorkflowLike): Promise<v
   await page.mouse.click(5, 5);
 }
 
+/**
+ * SPEC-step27.md §3/§4 — with an active conversation, clicking a palette
+ * entry auto-persists immediately via `POST /api/workflows/:id/changes`
+ * (store/manualLog.ts's queue) instead of only marking the workflow `dirty`
+ * for a later manual Save. Clicks the palette entry and waits for that
+ * request to resolve, so a caller that immediately reloads/re-fetches the
+ * workflow server-side (or reselects the conversation from the rail) sees
+ * the node that was just added.
+ */
+async function clickPaletteAndAwaitLog(page: Page, testId: string): Promise<void> {
+  const logged = page.waitForResponse(
+    (res) => res.request().method() === 'POST' && /\/api\/workflows\/[^/]+\/changes$/.test(new URL(res.url()).pathname),
+  );
+  await page.getByTestId(testId).click();
+  await logged;
+}
+
 test.describe('FlowForge — free tier (utility nodes only)', () => {
   test('1. App load: sidebar shows all 9 node types, toolbar has its buttons', async ({ page }) => {
     await page.goto('/');
@@ -344,16 +361,16 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     // adopted in the store, so there's no separate "read the id back out,
     // then reapply a whole new workflow object onto it" step that could race
     // with the just-finished conversation adoption above.
-    await page.getByTestId('palette-input.text').click();
-    await page.getByTestId('palette-text.template').click();
-    await page.getByTestId('palette-output.collect').click();
+    //
+    // SPEC-step27.md: each click auto-persists via the manual-change queue
+    // (this conversation is active) — Save is no longer what makes the
+    // workflow survive a reload, so this waits for each add's own log POST
+    // instead of clicking Save. `save-btn` correctly stays disabled
+    // throughout (checked below) since `dirty` is never set for a logged op.
+    await clickPaletteAndAwaitLog(page, 'palette-input.text');
+    await clickPaletteAndAwaitLog(page, 'palette-text.template');
+    await clickPaletteAndAwaitLog(page, 'palette-output.collect');
     await expect(page.getByTestId('node-card')).toHaveCount(3);
-
-    const saveResponse = page.waitForResponse(
-      (res) => ['POST', 'PUT'].includes(res.request().method()) && new URL(res.url()).pathname.startsWith('/api/workflows'),
-    );
-    await page.getByTestId('save-btn').click();
-    await saveResponse;
     await expect(page.getByTestId('save-btn')).toBeDisabled();
 
     await page.reload();
@@ -694,15 +711,14 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await page.goto('/');
     await page.getByTestId('new-conversation').click();
     await openCanvasMode(page);
-    await page.getByTestId('palette-input.text').click();
-    await expect(page.getByTestId('node-card')).toHaveCount(1);
 
     // selectConversation re-fetches the workflow from the SERVER (`GET
-    // /api/conversations/:id`) — the node added above only exists in the
-    // client store (dirty) until saved, so without this the rail reselect
-    // below would adopt the still-empty server-side workflow and the
-    // auto-split condition (`nodes.length > 0`) would never fire.
-    await page.getByTestId('save-btn').click();
+    // /api/conversations/:id`) — SPEC-step27.md: with this conversation
+    // active, the click below already auto-persists via the manual-change
+    // queue (awaited here), so the rail reselect below is guaranteed to see
+    // a non-empty server-side workflow without a separate Save click.
+    await clickPaletteAndAwaitLog(page, 'palette-input.text');
+    await expect(page.getByTestId('node-card')).toHaveCount(1);
     await expect(page.getByTestId('save-btn')).toBeDisabled();
 
     // Back to chat-only, then reselect the very same (now non-empty)
@@ -738,5 +754,67 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
     await page.keyboard.press('Control+Backslash');
     await expect(canvasPane).toHaveCSS('visibility', 'hidden'); // back to chat-only
+  });
+
+  // SPEC-step27.md §7 (e2e 1) — every manual canvas mutation logs a PatchOp
+  // (store/manualLog.ts's queue) once a conversation is active: dropping a
+  // node from the palette logs immediately (✋ row), editing a param logs
+  // ~800ms after the last keystroke (its own debounced row).
+  test('21. History tab: adding a node from the palette and editing its param each log a ✋ row', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('new-conversation').click();
+    await expect(page.getByTestId('chat-rename-btn')).toBeVisible();
+    await openCanvasMode(page);
+
+    await page.getByTestId('palette-input.text').click();
+    await expect(page.getByTestId('node-card')).toHaveCount(1);
+
+    await page.getByTestId('history-tab').click();
+    await expect(page.getByTestId('history-panel')).toBeVisible();
+    await expect(page.getByTestId('history-item')).toHaveCount(1, { timeout: 10_000 });
+    const addRow = page.getByTestId('history-item').first();
+    await expect(addRow).toContainText('✋');
+    await expect(addRow).toContainText('thêm node input.text');
+
+    // Back to Params to edit the node's value — this row logs debounced
+    // (800ms after the last keystroke), not immediately like add-node above.
+    await page.getByRole('button', { name: 'Params' }).click();
+    await page.getByTestId('node-card').click();
+    const valueInput = page.getByTestId('right-panel').locator('input[type="text"]').first();
+    await valueInput.fill('lịch sử e2e');
+
+    await page.getByTestId('history-tab').click();
+    await expect(page.getByTestId('history-item')).toHaveCount(2, { timeout: 10_000 });
+    const newestRow = page.getByTestId('history-item').first();
+    await expect(newestRow).toContainText('✋');
+    await expect(newestRow).toContainText('value');
+  });
+
+  // SPEC-step27.md §7 (e2e 2) — ↺ Khôi phục on the add-node row restores the
+  // snapshot from right before it (an empty canvas, since add-node was the
+  // very first change) and itself logs as a new "Khôi phục..." row.
+  test('22. History tab: ↺ Khôi phục on the add-node row empties the canvas and logs a new row', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('new-conversation').click();
+    await expect(page.getByTestId('chat-rename-btn')).toBeVisible();
+    await openCanvasMode(page);
+
+    await page.getByTestId('palette-input.text').click();
+    await expect(page.getByTestId('node-card')).toHaveCount(1);
+
+    await page.getByTestId('history-tab').click();
+    await expect(page.getByTestId('history-item')).toHaveCount(1, { timeout: 10_000 });
+
+    page.once('dialog', (dialog) => void dialog.accept());
+    await page.getByTestId('history-revert').click();
+
+    // adoptWorkflow() resets the right panel back to "Params" — the canvas
+    // itself (FlowCanvas's node-card elements) is unrelated to which
+    // right-panel tab is active, so this doesn't require switching back.
+    await expect(page.getByTestId('node-card')).toHaveCount(0, { timeout: 10_000 });
+
+    await page.getByTestId('history-tab').click();
+    await expect(page.getByTestId('history-item')).toHaveCount(2, { timeout: 10_000 });
+    await expect(page.getByTestId('history-item').first()).toContainText(/Khôi phục về trước thay đổi #\d+/);
   });
 });

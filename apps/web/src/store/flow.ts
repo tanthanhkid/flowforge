@@ -27,6 +27,19 @@ import { compatible } from '../canvas/portColors.ts';
 // (packages/shared, SPEC-step25.md), reused here for the chat turn's
 // per-op *optimistic* canvas apply (see `applyOptimisticOp` below).
 import { applyPatch, PatchError } from 'shared';
+// SPEC-step27.md §3 — every mutator below that a USER can trigger from the
+// canvas (as opposed to `adoptWorkflow`/`applyOptimisticOp`, which mirror an
+// AI turn) logs a `PatchOp` through this queue after applying its change
+// locally, unless the workflow has no paired conversation (`hasActiveConversation`).
+import {
+  cancelPendingMove,
+  cancelPendingNodeUpdate,
+  enqueueManualOps,
+  flushManualLog,
+  hasActiveConversation,
+  scheduleMove,
+  scheduleNodeParamsChange,
+} from './manualLog.ts';
 
 export interface NodeRunUiState {
   state: NodeState;
@@ -66,7 +79,8 @@ export interface FlowState {
    * RunsPanel and from `run()`'s onDone) can auto-switch to "results"
    * without threading a callback through the store.
    */
-  rightTab: 'params' | 'runs' | 'results';
+  /** SPEC-step27.md §5 adds the 4th "Lịch sử" tab (HistoryPanel). */
+  rightTab: 'params' | 'runs' | 'results' | 'history';
   /**
    * SPEC-step9.md §1 — set by NodeCard when the user clicks a node's inline
    * preview ("mở panel Kết quả và scroll tới output node đó"). ResultsPanel
@@ -226,7 +240,7 @@ export interface FlowState {
   /** See `showNodePreviews` above. */
   toggleNodePreviews(): void;
   /** See `rightTab` above. */
-  setRightTab(tab: 'params' | 'runs' | 'results'): void;
+  setRightTab(tab: 'params' | 'runs' | 'results' | 'history'): void;
   /** See `scrollToNodeId` above. */
   requestScrollToNode(id: string): void;
   clearScrollToNode(): void;
@@ -405,6 +419,10 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   },
 
   async saveWorkflow() {
+    // SPEC-step27.md §2 — flush mốc bắt buộc: any debounced manual-change
+    // entry still pending must be sent (and awaited) before Save's PUT, so
+    // the change log doesn't lag behind what's about to be persisted.
+    await flushManualLog();
     const workflow = get().workflow;
     try {
       await api.createWorkflow(workflow);
@@ -439,34 +457,63 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       params: defaultParamsFromSchema(spec),
       position,
     };
+    // SPEC-step27.md §3/§4 — a workflow with an active conversation
+    // auto-persists this op through the manual-change queue below, so it
+    // never needs the old `dirty`/Save-button path; a conversation-less
+    // workflow (legacy orphan edge case) keeps exactly the old behavior.
+    const logged = hasActiveConversation();
     set({
       workflow: { ...state.workflow, nodes: [...state.workflow.nodes, node] },
-      dirty: true,
+      ...(logged ? {} : { dirty: true }),
     });
+    if (logged) enqueueManualOps(state.workflow.id, [{ op: 'add-node', node }], `thêm node ${type} (${id})`);
     return id;
   },
 
   updateNodeParams(id, params) {
+    const prevParams = get().workflow.nodes.find((n) => n.id === id)?.params ?? {};
+    const logged = hasActiveConversation();
     set((state) => ({
       workflow: {
         ...state.workflow,
         nodes: state.workflow.nodes.map((n) => (n.id === id ? { ...n, params } : n)),
       },
-      dirty: true,
+      ...(logged ? {} : { dirty: true }),
     }));
+    // SPEC-step27.md §2/§3 — debounced 800ms after the last keystroke;
+    // `scheduleNodeParamsChange` keeps `prevParams` as the ORIGINAL baseline
+    // across repeated calls within the same debounce window, so only the net
+    // diff against the value still standing after that silence gets logged.
+    if (logged) scheduleNodeParamsChange(id, prevParams, params);
   },
 
   updateNodePosition(id, position) {
+    const logged = hasActiveConversation();
     set((state) => ({
       workflow: {
         ...state.workflow,
         nodes: state.workflow.nodes.map((n) => (n.id === id ? { ...n, position } : n)),
       },
-      dirty: true,
+      ...(logged ? {} : { dirty: true }),
     }));
+    // SPEC-step27.md §3 — FlowCanvas reports a `position` change on every
+    // pointermove during a drag; `scheduleMove`'s own 500ms debounce (not
+    // this call site) is what coalesces those into one `move-node` entry.
+    if (logged) scheduleMove(id, position);
   },
 
   removeNode(id) {
+    const logged = hasActiveConversation();
+    const workflowId = get().workflow.id;
+    if (logged) {
+      // Post-review fix (major finding #2): cancel any still-pending
+      // params/label (800ms) or move (500ms) debounce for this node BEFORE
+      // it's gone — otherwise that debounce fires later, POSTs an
+      // `update-node`/`move-node` for an id the server no longer has, and
+      // the resulting 422 used to be misread as a network failure.
+      cancelPendingNodeUpdate(id);
+      cancelPendingMove(id);
+    }
     set((state) => ({
       workflow: {
         ...state.workflow,
@@ -474,8 +521,11 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
         edges: state.workflow.edges.filter((e) => e.from.node !== id && e.to.node !== id),
       },
       selectedNodeId: state.selectedNodeId === id ? null : state.selectedNodeId,
-      dirty: true,
+      ...(logged ? {} : { dirty: true }),
     }));
+    // A single remove-node op already cascades to every edge touching it
+    // (packages/shared's applyPatch) — no separate remove-edge entries needed.
+    if (logged) enqueueManualOps(workflowId, [{ op: 'remove-node', nodeId: id }], `xoá node ${id}`);
   },
 
   addEdge(from, to) {
@@ -496,21 +546,39 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     if (inputOccupied) return false;
 
     const edge: WorkflowEdge = { id: generateEdgeId(workflow.edges), from, to };
+    const logged = hasActiveConversation();
     set({
       workflow: { ...workflow, edges: [...workflow.edges, edge] },
-      dirty: true,
+      ...(logged ? {} : { dirty: true }),
     });
+    if (logged) {
+      enqueueManualOps(
+        workflow.id,
+        [{ op: 'add-edge', edge }],
+        `nối ${from.node}.${from.port} → ${to.node}.${to.port}`,
+      );
+    }
     return true;
   },
 
   removeEdge(id) {
+    const logged = hasActiveConversation();
+    const workflowId = get().workflow.id;
     set((state) => ({
       workflow: { ...state.workflow, edges: state.workflow.edges.filter((e) => e.id !== id) },
-      dirty: true,
+      ...(logged ? {} : { dirty: true }),
     }));
+    if (logged) enqueueManualOps(workflowId, [{ op: 'remove-edge', edgeId: id }], `xoá edge ${id}`);
   },
 
   setWorkflowJson(workflow) {
+    // SPEC-step27.md §4 — deliberate exclusion ("hạn chế ghi nhận có chủ
+    // đích"): raw JSON edits (JsonView.tsx) and the workflow-name field
+    // (Toolbar.tsx, also routed through this setter) keep the pre-existing
+    // `dirty: true` + manual-Save (PUT) path and never call manualLog — the
+    // AI still sees the latest workflow every turn via the system prompt,
+    // it just won't show up as its own row in the change-log digest. Not
+    // expanding this step's scope to cover it.
     set((state) => ({
       workflow,
       selectedNodeId: workflow.nodes.some((n) => n.id === state.selectedNodeId) ? state.selectedNodeId : null,
@@ -519,6 +587,11 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   },
 
   async run(force) {
+    // SPEC-step27.md §2 — same mandatory flush point as saveWorkflow() above
+    // (also covers the `dirty` branch below, which calls saveWorkflow() and
+    // would otherwise flush a second time there — harmless, the queue is
+    // already drained by then).
+    await flushManualLog();
     if (get().dirty) {
       await get().saveWorkflow();
     }

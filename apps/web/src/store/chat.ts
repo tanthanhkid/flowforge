@@ -26,6 +26,13 @@ import * as api from '../api/client.ts';
 import { ApiError } from '../api/client.ts';
 import type { ChatMessage, ConversationSummary, PatchOp } from '../api/types.ts';
 import { useFlowStore } from './flow.ts';
+// Post-review fix (SPEC-step27.md's critical finding #1/#4): every place
+// below that swaps `useFlowStore`'s workflow out from under the canvas must
+// first flush any still-debouncing manual edit (a param keystroke, a node
+// drag) — otherwise that debounce fires later against whatever workflow is
+// current BY THEN, not the one the user was actually editing. See
+// `manualLog.ts`'s own header for the full story.
+import { flushManualLog } from './manualLog.ts';
 
 /** SPEC-step26.md §2.3 — what NodeCard.tsx/BrutalEdge.tsx animate per highlighted id. */
 export type OpHighlightKind = 'added' | 'updated' | 'edge-added';
@@ -269,6 +276,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async selectConversation(id) {
+    // Must happen before anything below touches `workflow`/`workflowVersion`
+    // — flushing sends any pending debounced op while the canvas is still
+    // pointed at the OLD (correct) workflow.
+    await flushManualLog();
     const res = await api.getConversation(id);
     stopActiveTurnSubscription();
     set({
@@ -325,6 +336,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async removeConversation(id) {
+    // Same reasoning as `selectConversation` above — if `id` is the active
+    // conversation, this is about to swap `useFlowStore`'s workflow out to
+    // an empty one via `newWorkflow()` below.
+    await flushManualLog();
     await api.deleteConversation(id);
     set((state) => ({ conversations: state.conversations.filter((c) => c.id !== id) }));
     if (get().activeConversationId === id) {

@@ -30,6 +30,11 @@ vi.mock('../src/api/client.ts', async (importOriginal) => {
     postChatMessage: vi.fn(),
     stopTurn: vi.fn(),
     openTurnEvents: vi.fn(),
+    // Post-review fix (SPEC-step27.md critical finding #1/#4) — exercised
+    // below via the REAL `store/manualLog.ts` (not mocked), so
+    // `selectConversation`/`removeConversation` awaiting `flushManualLog()`
+    // can be verified end-to-end instead of just checking call order.
+    postManualChange: vi.fn(),
   };
 });
 
@@ -37,6 +42,7 @@ vi.mock('../src/api/client.ts', async (importOriginal) => {
 import * as api from '../src/api/client.ts';
 import { useChatStore } from '../src/store/chat.ts';
 import { useFlowStore } from '../src/store/flow.ts';
+import { scheduleNodeParamsChange } from '../src/store/manualLog.ts';
 
 function resetStores(): void {
   useChatStore.setState({
@@ -108,6 +114,49 @@ describe('selectConversation', () => {
     // adoptWorkflow's reset semantics (SPEC-step23.md §3) took effect.
     expect(useFlowStore.getState().workflow).toEqual(sampleWorkflow);
     expect(useFlowStore.getState().dirty).toBe(false);
+  });
+
+  it('post-review fix (critical finding #1/#4): flushes a still-debouncing param edit to the OLD workflow BEFORE adopting the new one', async () => {
+    useFlowStore.setState({ workflow: { version: 1, id: 'wf-old', name: 'Old', nodes: [], edges: [] } });
+    useChatStore.setState({ workflowVersion: 4 });
+
+    vi.useFakeTimers();
+    try {
+      // A param edit debounce opens while `wf-old` is still the current
+      // workflow — captures `wf-old` as its target (manualLog.ts's
+      // `scheduleNodeParamsChange`), NOT whatever workflow ends up current
+      // by the time its 800ms timer would otherwise fire.
+      scheduleNodeParamsChange('n1', { value: 'a' }, { value: 'b' });
+
+      const otherWorkflow: Workflow = { version: 1, id: 'wf-new', name: 'New', nodes: [], edges: [] };
+      vi.mocked(api.getConversation).mockResolvedValue({
+        conversation: { ...sampleConversation, id: 'c2', workflowId: 'wf-new' },
+        messages: [],
+        workflow: otherWorkflow,
+        version: 9,
+      });
+      vi.mocked(api.postManualChange).mockResolvedValue({
+        change: {} as never,
+        workflow: { version: 1, id: 'wf-old', name: 'Old', nodes: [], edges: [] },
+        version: 5,
+      });
+
+      await useChatStore.getState().selectConversation('c2');
+    } finally {
+      vi.useRealTimers();
+    }
+
+    // The debounced edit landed on the OLD workflow, at the version that was
+    // current before switching — not on the new one.
+    expect(api.postManualChange).toHaveBeenCalledWith(
+      'wf-old',
+      expect.objectContaining({
+        ops: [{ op: 'update-node', nodeId: 'n1', params: { value: 'b' } }],
+        expectedVersion: 4,
+      }),
+    );
+    // The switch itself still completed correctly.
+    expect(useFlowStore.getState().workflow.id).toBe('wf-new');
   });
 });
 
@@ -448,6 +497,33 @@ describe('removeConversation', () => {
 
     expect(useChatStore.getState().conversations.map((c) => c.id)).toEqual(['c2']);
     expect(useChatStore.getState().activeConversationId).toBe('c2');
+  });
+
+  it('post-review fix (critical finding #1/#4): flushes a still-debouncing param edit BEFORE deleting the active conversation\'s workflow', async () => {
+    useChatStore.setState({ conversations: [sampleSummary], activeConversationId: 'c1' });
+    useFlowStore.setState({ workflow: { version: 1, id: 'wf1', name: 'Test', nodes: [], edges: [] } });
+    useChatStore.setState({ workflowVersion: 4 });
+    vi.mocked(api.deleteConversation).mockResolvedValue(undefined);
+    vi.mocked(api.postManualChange).mockResolvedValue({
+      change: {} as never,
+      workflow: { version: 1, id: 'wf1', name: 'Test', nodes: [], edges: [] },
+      version: 5,
+    });
+
+    vi.useFakeTimers();
+    try {
+      scheduleNodeParamsChange('n1', { value: 'a' }, { value: 'b' });
+      await useChatStore.getState().removeConversation('c1');
+    } finally {
+      vi.useRealTimers();
+    }
+
+    expect(api.postManualChange).toHaveBeenCalledWith(
+      'wf1',
+      expect.objectContaining({ ops: [{ op: 'update-node', nodeId: 'n1', params: { value: 'b' } }] }),
+    );
+    // The removal itself still completed correctly.
+    expect(useChatStore.getState().activeConversationId).toBeNull();
   });
 });
 

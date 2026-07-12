@@ -36,6 +36,7 @@ import { FlowCanvas } from '../canvas/FlowCanvas.tsx';
 import { Sidebar } from '../canvas/Sidebar.tsx';
 import { layoutModeFromRatio, SPLIT_ANIMATE_MS, useChatStore } from '../store/chat.ts';
 import { useFlowStore } from '../store/flow.ts';
+import { HistoryPanel } from './HistoryPanel.tsx';
 import { ParamsPanel } from './ParamsPanel.tsx';
 import { ResultsPanel } from './ResultsPanel.tsx';
 import { RunsPanel } from './RunsPanel.tsx';
@@ -106,11 +107,20 @@ export function CanvasPane() {
           >
             Kết quả
           </button>
+          <button
+            type="button"
+            data-testid="history-tab"
+            onClick={() => setRightTab('history')}
+            className={rightTabClass(rightTab === 'history')}
+          >
+            Lịch sử
+          </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto">
           {rightTab === 'params' && <ParamsPanel />}
           {rightTab === 'runs' && <RunsPanel />}
           {rightTab === 'results' && <ResultsPanel />}
+          {rightTab === 'history' && <HistoryPanel />}
         </div>
       </aside>
     </section>

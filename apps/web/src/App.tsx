@@ -20,6 +20,7 @@ import { SplitDivider } from './panels/SplitDivider.tsx';
 import { Toolbar } from './panels/Toolbar.tsx';
 import { layoutModeFromRatio, modeRatio, nextMode, useChatStore } from './store/chat.ts';
 import { useFlowStore } from './store/flow.ts';
+import { ToastHost } from './ui/Toast.tsx';
 
 /** Native DOM keydown target check — the shortcut below must not fire while the user is typing (SPEC-step24.md §2). */
 function isEditableTarget(target: EventTarget | null): boolean {
@@ -78,6 +79,11 @@ function App() {
 
       {showJsonView && <JsonView onClose={() => setShowJsonView(false)} />}
       {showSettings && <SettingsPage onClose={() => setShowSettings(false)} />}
+
+      {/* SPEC-step27.md §6 — mounted once, globally, so a manualLog.ts toast
+          (or one from any future call site) renders regardless of which
+          pane/tab is currently active. */}
+      <ToastHost />
     </div>
   );
 }
