@@ -55,7 +55,7 @@ describe('Toolbar — 💰 cost estimate', () => {
   });
 
   it('shows a ~$0.00 badge before any estimate has loaded', () => {
-    render(<Toolbar onOpenWorkflowList={noop} onOpenJsonView={noop} onOpenSettings={noop} />);
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
     expect(screen.getByTestId('cost-estimate')).toHaveTextContent('~$0.00');
   });
 
@@ -71,7 +71,7 @@ describe('Toolbar — 💰 cost estimate', () => {
       return Promise.resolve(jsonResponse({ ok: true, issues: [] }));
     });
 
-    render(<Toolbar onOpenWorkflowList={noop} onOpenJsonView={noop} onOpenSettings={noop} />);
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(800);
@@ -93,7 +93,7 @@ describe('Toolbar — 💰 cost estimate', () => {
       return Promise.resolve(jsonResponse({ ok: true, issues: [] }));
     });
 
-    render(<Toolbar onOpenWorkflowList={noop} onOpenJsonView={noop} onOpenSettings={noop} />);
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(800);
     });
@@ -113,7 +113,7 @@ describe('Toolbar — 💰 cost estimate', () => {
       return Promise.resolve(jsonResponse({ ok: true, issues: [] }));
     });
 
-    render(<Toolbar onOpenWorkflowList={noop} onOpenJsonView={noop} onOpenSettings={noop} />);
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(800);
     });
@@ -146,7 +146,7 @@ describe('Toolbar — 🪄 Sắp xếp (SPEC-step16.md §3)', () => {
   });
 
   it('clicking "🪄 Sắp xếp" recomputes node positions via autoLayout()', () => {
-    render(<Toolbar onOpenWorkflowList={noop} onOpenJsonView={noop} onOpenSettings={noop} />);
+    render(<Toolbar onOpenJsonView={noop} onOpenSettings={noop} />);
 
     fireEvent.click(screen.getByTestId('auto-layout-btn'));
 

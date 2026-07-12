@@ -1,8 +1,11 @@
 /**
- * Layout (SPEC-step4.md §2/§4): top Toolbar, then Sidebar | Canvas | right
- * panel (Params/Runs/Kết quả tabs — SPEC-step9.md §2 lifted the tab
- * selection into the store so `openRun` can auto-switch to "Kết quả").
- * WorkflowList renders as an overlay.
+ * Layout (SPEC-step4.md §2/§4, SPEC-step23.md §7): top Toolbar, then
+ * ConversationRail | ChatPane | Sidebar | Canvas | right panel (Params/Runs/
+ * Kết quả tabs — SPEC-step9.md §2 lifted the tab selection into the store so
+ * `openRun` can auto-switch to "Kết quả"). INTERIM layout — ConversationRail
+ * and ChatPane are fixed-width columns here; SPEC-step24 replaces this with
+ * a real SplitDivider/Mode Toggle. The old `WorkflowList` modal is gone —
+ * ConversationRail is its full replacement (SPEC-step23.md §7).
  *
  * SPEC-step18.md §5.5 — right-panel tabs restyled as "bìa hồ sơ" (folder
  * tabs): 2px black border box, active tab bg-accent with its bottom border
@@ -13,13 +16,15 @@
 import { useEffect, useState } from 'react';
 import { FlowCanvas } from './canvas/FlowCanvas.tsx';
 import { Sidebar } from './canvas/Sidebar.tsx';
+import { ChatPane } from './panels/ChatPane.tsx';
+import { ConversationRail } from './panels/ConversationRail.tsx';
 import { JsonView } from './panels/JsonView.tsx';
 import { ParamsPanel } from './panels/ParamsPanel.tsx';
 import { ResultsPanel } from './panels/ResultsPanel.tsx';
 import { RunsPanel } from './panels/RunsPanel.tsx';
 import { SettingsPage } from './panels/SettingsPage.tsx';
 import { Toolbar } from './panels/Toolbar.tsx';
-import { WorkflowList } from './panels/WorkflowList.tsx';
+import { useChatStore } from './store/chat.ts';
 import { useFlowStore } from './store/flow.ts';
 
 /** "Bìa hồ sơ" tab classes (spec §5.5) — see file header for the fused-border trick. */
@@ -34,7 +39,7 @@ function App() {
   const loadCatalog = useFlowStore((state) => state.loadCatalog);
   const rightTab = useFlowStore((state) => state.rightTab);
   const setRightTab = useFlowStore((state) => state.setRightTab);
-  const [showWorkflowList, setShowWorkflowList] = useState(false);
+  const loadConversations = useChatStore((state) => state.loadConversations);
   const [showJsonView, setShowJsonView] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
 
@@ -45,24 +50,25 @@ function App() {
     loadCatalog().catch((err: unknown) => {
       console.error('Failed to load model catalog', err);
     });
-  }, [loadRegistry, loadCatalog]);
+    loadConversations().catch((err: unknown) => {
+      console.error('Failed to load conversations', err);
+    });
+  }, [loadRegistry, loadCatalog, loadConversations]);
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-bg text-ink">
-      <Toolbar
-        onOpenWorkflowList={() => setShowWorkflowList(true)}
-        onOpenJsonView={() => setShowJsonView(true)}
-        onOpenSettings={() => setShowSettings(true)}
-      />
+      <Toolbar onOpenJsonView={() => setShowJsonView(true)} onOpenSettings={() => setShowSettings(true)} />
 
       <div className="flex min-h-0 flex-1">
+        <ConversationRail />
+        <ChatPane />
         <Sidebar />
 
         <main className="min-w-0 flex-1">
           <FlowCanvas />
         </main>
 
-        <aside className="flex w-80 shrink-0 flex-col border-l-[3px] border-ink bg-paper">
+        <aside data-testid="right-panel" className="flex w-80 shrink-0 flex-col border-l-[3px] border-ink bg-paper">
           <div className="flex shrink-0">
             <button type="button" onClick={() => setRightTab('params')} className={rightTabClass(rightTab === 'params')}>
               Params
@@ -92,7 +98,6 @@ function App() {
         </aside>
       </div>
 
-      {showWorkflowList && <WorkflowList onClose={() => setShowWorkflowList(false)} />}
       {showJsonView && <JsonView onClose={() => setShowJsonView(false)} />}
       {showSettings && <SettingsPage onClose={() => setShowSettings(false)} />}
     </div>

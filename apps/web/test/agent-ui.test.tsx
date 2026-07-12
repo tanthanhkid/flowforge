@@ -61,7 +61,7 @@ describe('Toolbar ✨ Describe panel', () => {
     };
     fetchMock.mockResolvedValueOnce(jsonResponse({ workflow: generated, attempts: 1 }));
 
-    render(<Toolbar onOpenWorkflowList={() => {}} onOpenJsonView={() => {}} onOpenSettings={() => {}} />);
+    render(<Toolbar onOpenJsonView={() => {}} onOpenSettings={() => {}} />);
 
     fireEvent.click(screen.getByText('✨ Describe'));
     const textarea = screen.getByPlaceholderText('Mô tả workflow bạn muốn tạo…');
@@ -82,7 +82,7 @@ describe('Toolbar ✨ Describe panel', () => {
       jsonResponse({ error: 'invalid', issues: [{ code: 'cycle', message: 'Cycle detected' }] }, 422),
     );
 
-    render(<Toolbar onOpenWorkflowList={() => {}} onOpenJsonView={() => {}} onOpenSettings={() => {}} />);
+    render(<Toolbar onOpenJsonView={() => {}} onOpenSettings={() => {}} />);
 
     fireEvent.click(screen.getByText('✨ Describe'));
     fireEvent.change(screen.getByPlaceholderText('Mô tả workflow bạn muốn tạo…'), {

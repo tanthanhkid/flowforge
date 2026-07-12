@@ -131,6 +131,17 @@ export interface FlowState {
    */
   refreshModelCatalog(): Promise<void>;
   newWorkflow(): void;
+  /**
+   * SPEC-step23.md §3 — the shared "load a workflow object into the store"
+   * reset, factored out of `loadWorkflow` so `store/chat.ts` can adopt a
+   * workflow it already fetched some other way (`selectConversation`'s
+   * `GET /api/conversations/:id`, a chat turn's SSE `message` event, a
+   * manual-change/revert response) without a redundant `GET
+   * /api/workflows/:id` round-trip. Same reset semantics as `loadWorkflow`
+   * (stop any live run subscription, clear selection/dirty/validation/etc.)
+   * — `loadWorkflow` itself is now just `getWorkflow` + this.
+   */
+  adoptWorkflow(workflow: Workflow): void;
   loadWorkflow(id: string): Promise<void>;
   saveWorkflow(): Promise<void>;
   /** Not from spec §3's action list verbatim, but selectedNodeId needs a setter for the canvas/panels built in the next step. */
@@ -350,8 +361,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     });
   },
 
-  async loadWorkflow(id) {
-    const workflow = await api.getWorkflow(id);
+  adoptWorkflow(workflow) {
     stopActiveRunSubscription();
     set({
       workflow,
@@ -365,6 +375,11 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       rightTab: 'params',
       scrollToNodeId: null,
     });
+  },
+
+  async loadWorkflow(id) {
+    const workflow = await api.getWorkflow(id);
+    get().adoptWorkflow(workflow);
   },
 
   async saveWorkflow() {

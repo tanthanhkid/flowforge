@@ -3,6 +3,7 @@
  * `text.template`, `output.collect`) — zero API cost, safe to run anytime.
  * Must pass 100% reliably, twice in a row.
  */
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -15,6 +16,14 @@ import { expect, test, type Page } from '@playwright/test';
 // zero-cost `input.file` node can reference it (no fal.ai call needed to
 // exercise the ResultsPanel's media/download rendering).
 const artifactsDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '../.tmp/artifacts');
+
+// SPEC-step23.md §8 test 14 — same `e2e/.tmp` scratch dir playwright.config.ts
+// points the running server at, so `pnpm --filter server seed` (run from a
+// separate child process, DB closed before it returns) operates on the
+// exact DB/artifacts the already-running webServer has open.
+const e2eRoot = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+const repoRoot = path.join(e2eRoot, '..');
+const e2eDbPath = path.join(e2eRoot, '.tmp', 'e2e.db');
 
 // A valid, minimal 1x1 transparent PNG — content doesn't matter, only that
 // `input.file` accepts it as a real file and the browser can point an <img>
@@ -161,7 +170,10 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await page.getByTestId('palette-input.text').click();
     await page.getByTestId('node-card').click();
 
-    const valueInput = page.locator('input[type="text"]').first();
+    // Scoped to the right panel (SPEC-step23.md §7 added `data-testid=
+    // "right-panel"`) — a bare `input[type="text"]` would now also match
+    // ConversationRail's search box, which sits earlier in the DOM.
+    const valueInput = page.getByTestId('right-panel').locator('input[type="text"]').first();
     await valueInput.fill('hello from e2e');
 
     await page.getByTestId('json-view-btn').click();
@@ -256,23 +268,58 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await expect(selectedCard).toHaveCount(1);
   });
 
-  test('8. Persistence: saved workflow survives a page reload', async ({ page }) => {
+  // SPEC-step23.md §7/§8 — WorkflowList's "Workflows" browsing modal is gone;
+  // reopening a saved workflow now goes through ConversationRail's
+  // conversation-item list instead. A conversation is 1-1 with a workflow
+  // (DESIGN-ai-native.md §II.4), so this test starts from "+ Cuộc trò chuyện
+  // mới" (which claims a real server-side workflow id up front) rather than
+  // building the sample workflow onto a fresh client-generated id — the
+  // latter would save as an orphan workflow with no paired conversation,
+  // invisible in the rail until the next server restart's backfill.
+  test('8. Persistence: saved workflow survives a page reload (via a conversation)', async ({ page }) => {
     await page.goto('/');
-    const wf = sampleWorkflow();
-    await applyWorkflowViaJsonView(page, wf);
+
+    await page.getByTestId('new-conversation').click();
+    // Confirms selectConversation's GET already resolved (ChatPane only
+    // renders this button once `activeConversationId` is set) before doing
+    // anything that depends on the freshly-adopted workflow below.
+    await expect(page.getByTestId('chat-rename-btn')).toBeVisible();
+    await expect(page.getByTestId('node-card')).toHaveCount(0);
+
+    // Conversation titles default to '' until a chat message auto-titles
+    // them (routes/conversations.ts §4.6) — rename it to something unique so
+    // it's findable in the rail after reload without sending a real message
+    // (which would cost a real OpenRouter call).
+    const title = `e2e persistence ${Date.now()}`;
+    await page.getByTestId('chat-rename-btn').click();
+    await page.getByTestId('chat-rename-input').fill(title);
+    await page.getByTestId('chat-rename-input').press('Enter');
+    await expect(page.getByTestId('chat-pane').getByText(title)).toBeVisible();
+
+    // Add 3 nodes directly via the palette rather than round-tripping through
+    // the JSON view — this mutates whatever workflow id is *currently*
+    // adopted in the store, so there's no separate "read the id back out,
+    // then reapply a whole new workflow object onto it" step that could race
+    // with the just-finished conversation adoption above.
+    await page.getByTestId('palette-input.text').click();
+    await page.getByTestId('palette-text.template').click();
+    await page.getByTestId('palette-output.collect').click();
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+
+    const saveResponse = page.waitForResponse(
+      (res) => ['POST', 'PUT'].includes(res.request().method()) && new URL(res.url()).pathname.startsWith('/api/workflows'),
+    );
     await page.getByTestId('save-btn').click();
+    await saveResponse;
     await expect(page.getByTestId('save-btn')).toBeDisabled();
 
     await page.reload();
     await page.getByTestId('palette-input.text').waitFor();
 
-    await page.getByRole('button', { name: 'Workflows' }).click();
-    // `exact: true` (SPEC-step18.md §5.6's WorkflowList row): the row's own
-    // "✕" delete button carries `aria-label="Xoá ${wf.name}"`, whose
-    // accessible name contains `wf.name` as a substring — Playwright's
-    // default substring match on `getByRole(..., { name })` would otherwise
-    // resolve both buttons and fail with a strict-mode violation.
-    await page.getByRole('button', { name: wf.name, exact: true }).click();
+    // `.first()`: the item's title button renders before its ✕ delete
+    // button — both are `<button>` elements, so this picks the title one.
+    const item = page.getByTestId('conversation-item').filter({ hasText: title });
+    await item.getByRole('button').first().click();
 
     await expect(page.getByTestId('node-card')).toHaveCount(3);
   });
@@ -490,5 +537,73 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
 
     // The graph is also visually still intact (no node lost/duplicated).
     await expect(page.getByTestId('node-card')).toHaveCount(3);
+  });
+
+  // SPEC-step23.md §8 (a) — end-to-end verification of the backfill
+  // migration (DESIGN-ai-native.md §8 / db/backfill.ts): running the real
+  // seed script against this same run's scratch DB must make every seeded
+  // sample show up in the rail as its own conversation.
+  test('14. Backfill: after seeding the 11 sample workflows, the rail lists at least 11 conversations', async ({
+    page,
+  }) => {
+    test.setTimeout(90_000);
+
+    try {
+      execFileSync('pnpm', ['--filter', 'server', 'seed'], {
+        cwd: repoRoot,
+        env: { ...process.env, FLOWFORGE_DB_PATH: e2eDbPath, FLOWFORGE_ARTIFACTS_DIR: artifactsDir },
+        stdio: 'pipe',
+      });
+    } catch (err) {
+      const { stdout, stderr } = err as { stdout?: Buffer; stderr?: Buffer };
+      console.error('seed-samples failed:\n', stdout?.toString(), stderr?.toString());
+      throw err;
+    }
+
+    await page.goto('/');
+    await expect
+      .poll(async () => page.getByTestId('conversation-item').count(), { timeout: 20_000 })
+      .toBeGreaterThanOrEqual(11);
+  });
+
+  // SPEC-step23.md §8 (b) — "+ Cuộc trò chuyện mới" creates a fresh
+  // conversation+workflow pair and selects it immediately.
+  test('15. ConversationRail: "+ Cuộc trò chuyện mới" adds a new item and clears the canvas', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('palette-input.text').waitFor();
+
+    // Not asserting an exact/incremented `conversation-item` count here —
+    // earlier tests in this same run (shared server/DB) may have already
+    // created any number of conversations, and reading a "before" baseline
+    // right after navigation races App.tsx's own mount-time
+    // `loadConversations()` fetch. `newConversation()` always prepends the
+    // freshly created (and immediately selected) conversation to the front
+    // of the list, so asserting the first item is active + the canvas is
+    // empty is enough to prove one was actually created.
+    await page.getByTestId('new-conversation').click();
+
+    await expect(page.getByTestId('conversation-item').first()).toHaveAttribute('data-active', 'true');
+    await expect(page.getByTestId('node-card')).toHaveCount(0);
+  });
+
+  // SPEC-step23.md §8 (c) — deleting a conversation removes it from the rail
+  // (confirm dialog accepted, mirrors WorkflowList's old delete UX).
+  test('16. ConversationRail: deleting a conversation removes it from the rail', async ({ page }) => {
+    await page.goto('/');
+    await page.getByTestId('new-conversation').click();
+
+    const title = `e2e delete-me ${Date.now()}`;
+    await page.getByTestId('chat-rename-btn').click();
+    await page.getByTestId('chat-rename-input').fill(title);
+    await page.getByTestId('chat-rename-input').press('Enter');
+    await expect(page.getByTestId('chat-pane').getByText(title)).toBeVisible();
+
+    const item = page.getByTestId('conversation-item').filter({ hasText: title });
+    await expect(item).toHaveCount(1);
+
+    page.once('dialog', (dialog) => void dialog.accept());
+    await item.getByTestId('conversation-delete-btn').click();
+
+    await expect(page.getByTestId('conversation-item').filter({ hasText: title })).toHaveCount(0);
   });
 });

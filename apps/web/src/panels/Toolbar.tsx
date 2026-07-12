@@ -1,15 +1,17 @@
 /**
  * Top toolbar (SPEC-step4.md §4): editable workflow name, Save (disabled
  * when !dirty), Validate (issue list, click -> select the offending node),
- * ▶ Run (disabled while running, spinner + status while running), New, a
- * button to open the WorkflowList overlay, and (SPEC-step5.md §6) a
- * "✨ Describe" panel that turns a natural-language description into a
- * whole workflow via POST /api/agent/generate-workflow.
+ * ▶ Run (disabled while running, spinner + status while running), New, and
+ * (SPEC-step5.md §6) a "✨ Describe" panel that turns a natural-language
+ * description into a whole workflow via POST /api/agent/generate-workflow.
  *
- * SPEC-step18.md §5.1 — re-themed neo-brutalist: 5 groups separated by
- * 2px vertical black dividers (wordmark+name | New·Workflows·Save |
- * Validate·💰 | Run·⚡Run bỏ cache | 🪄 Sắp xếp·👁 Preview | ✨ Describe |
- * {} JSON | spacer | ⚙), built from the shared `ui/` primitives.
+ * SPEC-step18.md §5.1 — re-themed neo-brutalist: groups separated by 2px
+ * vertical black dividers (wordmark+name | New·Save | Validate·💰 |
+ * Run·⚡Run bỏ cache | 🪄 Sắp xếp·👁 Preview | ✨ Describe | {} JSON | spacer |
+ * ⚙), built from the shared `ui/` primitives. SPEC-step23.md §7 removed the
+ * "Workflows" button/`onOpenWorkflowList` prop — `ConversationRail` (a
+ * sibling of this toolbar in `App.tsx`) is the full replacement for the old
+ * `WorkflowList.tsx` modal.
  */
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { ApiError, generateWorkflowFromDescription } from '../api/client.ts';
@@ -57,12 +59,11 @@ function ToolbarDivider() {
 }
 
 export interface ToolbarProps {
-  onOpenWorkflowList: () => void;
   onOpenJsonView: () => void;
   onOpenSettings: () => void;
 }
 
-export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: ToolbarProps) {
+export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
   const workflow = useFlowStore((s) => s.workflow);
   const dirty = useFlowStore((s) => s.dirty);
   const runStatus = useFlowStore((s) => s.runStatus);
@@ -252,12 +253,9 @@ export function Toolbar({ onOpenWorkflowList, onOpenJsonView, onOpenSettings }: 
 
       <ToolbarDivider />
 
-      {/* Group 2: New · Workflows · Save */}
+      {/* Group 2: New · Save */}
       <Button type="button" onClick={newWorkflow}>
         New
-      </Button>
-      <Button type="button" onClick={onOpenWorkflowList}>
-        Workflows
       </Button>
       <Button type="button" data-testid="save-btn" onClick={() => void handleSave()} disabled={!dirty || saving}>
         {saving ? 'Saving…' : 'Save'}

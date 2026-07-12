@@ -71,7 +71,21 @@ export default defineConfig({
   projects: [
     {
       name: 'chromium',
-      use: { ...devices['Desktop Chrome'] },
+      use: {
+        ...devices['Desktop Chrome'],
+        // SPEC-step23.md §7 — ConversationRail (w-64) + ChatPane (w-96) are
+        // two new fixed-width columns to the left of the canvas in this
+        // interim layout (no collapsible SplitDivider until SPEC-step24), on
+        // top of the pre-existing NodePalette (210px) + right panel (320px).
+        // `Desktop Chrome`'s default 1280x720 viewport leaves the actual
+        // FlowCanvas only ~110px wide, clipping/overlapping node cards into
+        // neighboring panels and breaking clicks on specific nodes (tests
+        // 3/12). 1920x1080 restores the ~750px canvas width the existing
+        // node-position-based tests were written against (1920 - (256 rail +
+        // 384 chat + 210 palette + 320 right panel) = 750, matching the old
+        // 1280 - (210 + 320) = 750 exactly).
+        viewport: { width: 1920, height: 1080 },
+      },
     },
   ],
   webServer: [

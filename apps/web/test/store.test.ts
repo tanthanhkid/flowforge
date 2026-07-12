@@ -454,6 +454,40 @@ describe('rightTab / scrollToNodeId (SPEC-step9.md §1/§2)', () => {
   });
 });
 
+// SPEC-step23.md §3 — adoptWorkflow is the reset loadWorkflow now delegates
+// to (GET + adoptWorkflow); this exercises the reset directly, without a
+// network round-trip, the way store/chat.ts's selectConversation will call it.
+describe('adoptWorkflow (SPEC-step23.md §3)', () => {
+  it('replaces the workflow and resets run/selection/dirty/validation state, same as loadWorkflow', () => {
+    useFlowStore.setState({
+      selectedNodeId: 'stale-node',
+      runId: 'stale-run',
+      runStatus: 'running',
+      nodeRuns: { 'stale-node': { state: 'success', logs: [] } },
+      dirty: true,
+      validationIssues: [{ code: 'x', message: 'y' }],
+      forceNodeIds: ['stale-node'],
+      rightTab: 'runs',
+      scrollToNodeId: 'stale-node',
+    });
+
+    const incoming: Workflow = { version: 1, id: 'wf-adopted', name: 'Adopted', nodes: [], edges: [] };
+    useFlowStore.getState().adoptWorkflow(incoming);
+
+    const state = useFlowStore.getState();
+    expect(state.workflow).toEqual(incoming);
+    expect(state.selectedNodeId).toBeNull();
+    expect(state.runId).toBeUndefined();
+    expect(state.runStatus).toBeUndefined();
+    expect(state.nodeRuns).toEqual({});
+    expect(state.dirty).toBe(false);
+    expect(state.validationIssues).toEqual([]);
+    expect(state.forceNodeIds).toEqual([]);
+    expect(state.rightTab).toBe('params');
+    expect(state.scrollToNodeId).toBeNull();
+  });
+});
+
 describe('run() auto-switch on finish (SPEC-step9.md §2)', () => {
   it('switches rightTab to "results" once the run finishes (onDone -> openRun)', async () => {
     useFlowStore.setState({ dirty: false, rightTab: 'params' });

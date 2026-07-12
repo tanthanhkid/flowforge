@@ -290,6 +290,71 @@ export interface RefreshCatalogResult {
   source: CatalogSource;
 }
 
+// ---- db/conversations.ts / db/messages.ts / db/changes.ts / agent/patch.ts
+// (SPEC-step20.md §3, SPEC-step22.md §2/§4/§5 — routes/conversations.ts,
+// routes/changes.ts) -------------------------------------------------------
+
+export interface Conversation {
+  id: string;
+  workflowId: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  lastSeenChangeId: number | null;
+}
+
+export interface ConversationSummary {
+  id: string;
+  workflowId: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+  nodeCount: number;
+  lastRunStatus?: string;
+}
+
+export type MessageRole = 'user' | 'assistant';
+export type MessageStatus = 'pending' | 'streaming' | 'done' | 'error';
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  role: MessageRole;
+  content: string;
+  status: MessageStatus;
+  error?: string;
+  changeId?: number;
+  createdAt: number;
+}
+
+// Mirrors apps/server/src/agent/patch.ts's `PatchOpSchema` exactly (5 base
+// ops + `move-node`) — no shared package yet (DESIGN-ai-native.md §7 notes
+// this as tech debt for a later step), so this is a hand-mirrored copy like
+// every other type in this file.
+export type PatchOp =
+  | { op: 'update-node'; nodeId: string; params?: Record<string, unknown>; label?: string }
+  | { op: 'add-node'; node: WorkflowNode }
+  | { op: 'remove-node'; nodeId: string }
+  | { op: 'add-edge'; edge: WorkflowEdge }
+  | { op: 'remove-edge'; edgeId: string }
+  | { op: 'move-node'; nodeId: string; position: { x: number; y: number } };
+
+export type ChangeSource = 'ai' | 'user';
+export type ChangeScope = 'structural' | 'cosmetic';
+
+/** `WorkflowChange` minus `snapshotAfter` — routes/changes.ts never sends that field to the client. */
+export interface WorkflowChangeSummary {
+  id: number;
+  workflowId: string;
+  conversationId: string;
+  source: ChangeSource;
+  scope: ChangeScope;
+  messageId?: string;
+  ops: PatchOp[];
+  summary: string;
+  createdAt: number;
+}
+
 // ---- routes/estimate.ts (POST /api/estimate, SPEC-step15.md §2) --------
 
 export interface NodeCostEstimate {
