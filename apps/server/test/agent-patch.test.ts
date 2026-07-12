@@ -3,7 +3,7 @@
  * error-on-bad-reference (with the offending op index).
  */
 import { describe, expect, it } from 'vitest';
-import { applyPatch, PatchError } from '../src/agent/patch.js';
+import { applyPatch, changeScope, opScope, PatchError, type PatchOp } from '../src/agent/patch.js';
 import type { Workflow } from '../src/engine/schema.js';
 
 function baseWorkflow(): Workflow {
@@ -133,5 +133,61 @@ describe('applyPatch', () => {
       { op: 'remove-edge', edgeId: 'e1' },
     ]);
     expect(wf).toEqual(snapshot);
+  });
+
+  // SPEC-step21.md §2 — move-node op.
+  it('move-node: sets the node position, purely', () => {
+    const wf = baseWorkflow();
+    const snapshot = JSON.parse(JSON.stringify(wf));
+    const result = applyPatch(wf, [{ op: 'move-node', nodeId: 'a', position: { x: 140, y: 260 } }]);
+    expect(result.nodes.find((n) => n.id === 'a')?.position).toEqual({ x: 140, y: 260 });
+    expect(wf).toEqual(snapshot);
+  });
+
+  it('move-node on an unknown nodeId throws PatchError carrying the op index', () => {
+    const wf = baseWorkflow();
+    try {
+      applyPatch(wf, [
+        { op: 'update-node', nodeId: 'a', label: 'ok' },
+        { op: 'move-node', nodeId: 'nope', position: { x: 0, y: 0 } },
+      ]);
+      expect.unreachable();
+    } catch (err) {
+      expect(err).toBeInstanceOf(PatchError);
+      expect((err as PatchError).opIndex).toBe(1);
+    }
+  });
+});
+
+// SPEC-step21.md §2 — opScope/changeScope.
+describe('opScope / changeScope', () => {
+  const addNode: PatchOp = { op: 'add-node', node: { id: 'x', type: 'input.text', params: {} } };
+  const moveNode: PatchOp = { op: 'move-node', nodeId: 'x', position: { x: 0, y: 0 } };
+
+  it('opScope: move-node is cosmetic, every other op is structural', () => {
+    expect(opScope(moveNode)).toBe('cosmetic');
+    expect(opScope(addNode)).toBe('structural');
+    expect(opScope({ op: 'remove-node', nodeId: 'x' })).toBe('structural');
+    expect(opScope({ op: 'update-node', nodeId: 'x' })).toBe('structural');
+    expect(opScope({ op: 'add-edge', edge: { id: 'e', from: { node: 'a', port: 'p' }, to: { node: 'b', port: 'q' } } })).toBe(
+      'structural',
+    );
+    expect(opScope({ op: 'remove-edge', edgeId: 'e' })).toBe('structural');
+  });
+
+  it('changeScope: an empty array is cosmetic', () => {
+    expect(changeScope([])).toBe('cosmetic');
+  });
+
+  it('changeScope: all-cosmetic ops -> cosmetic', () => {
+    expect(changeScope([moveNode, moveNode])).toBe('cosmetic');
+  });
+
+  it('changeScope: a mix of cosmetic and structural ops -> structural', () => {
+    expect(changeScope([moveNode, addNode])).toBe('structural');
+  });
+
+  it('changeScope: all-structural ops -> structural', () => {
+    expect(changeScope([addNode])).toBe('structural');
   });
 });

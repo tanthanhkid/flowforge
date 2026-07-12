@@ -37,6 +37,14 @@ export const PatchOpSchema = z.discriminatedUnion('op', [
     }),
   }),
   z.object({ op: z.literal('remove-edge'), edgeId: z.string() }),
+  // SPEC-step21.md §2: cosmetic op for dragging a node — the LLM is never
+  // told about this op (buildChatSystemPrompt/buildEditSystemPrompt don't
+  // mention it), but a stray one in an LLM response is still valid input.
+  z.object({
+    op: z.literal('move-node'),
+    nodeId: z.string(),
+    position: z.object({ x: z.number(), y: z.number() }),
+  }),
 ]);
 
 export type PatchOp = z.infer<typeof PatchOpSchema>;
@@ -141,8 +149,41 @@ export function applyPatch(workflow: Workflow, ops: PatchOp[]): Workflow {
         edges = edges.filter((e) => e.id !== op.edgeId);
         break;
       }
+
+      case 'move-node': {
+        const idx = nodes.findIndex((n) => n.id === op.nodeId);
+        if (idx === -1) {
+          throw new PatchError(`move-node: node "${op.nodeId}" không tồn tại`, index);
+        }
+        const node = nodes[idx]!;
+        const updated = { ...node, position: { ...op.position } };
+        nodes = [...nodes.slice(0, idx), updated, ...nodes.slice(idx + 1)];
+        break;
+      }
     }
   });
 
   return { ...workflow, nodes, edges };
+}
+
+/**
+ * SPEC-step21.md §2 — classifies a single op for change-tracking purposes:
+ * `move-node` only touches layout (no logic impact), everything else is
+ * `structural` (affects what the workflow actually does, so it belongs in
+ * the digest sent back to the LLM — see changeDigest.ts).
+ */
+export function opScope(op: PatchOp): 'structural' | 'cosmetic' {
+  return op.op === 'move-node' ? 'cosmetic' : 'structural';
+}
+
+/**
+ * A change (one `applyPatch()` call, possibly several ops) is `cosmetic`
+ * only when EVERY op in it is cosmetic — a single structural op anywhere in
+ * the batch makes the whole change structural. An empty array counts as
+ * `cosmetic` (vacuously true; there's nothing structural to hide from the
+ * digest, and this keeps `changeScope([])` from needing a special case at
+ * call sites).
+ */
+export function changeScope(ops: PatchOp[]): 'structural' | 'cosmetic' {
+  return ops.every((op) => opScope(op) === 'cosmetic') ? 'cosmetic' : 'structural';
 }

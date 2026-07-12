@@ -200,6 +200,30 @@ function buildOpenRouterCatalogSection(capped: CappedLiveCatalogForPrompt | unde
   ].join('\n');
 }
 
+/**
+ * SPEC-step21.md §5 — the "node catalog + MODEL CATALOG (fal) + MODEL
+ * CATALOG (OpenRouter LLM)" block shared verbatim by `buildGenerateSystemPrompt`,
+ * `buildEditSystemPrompt`, and the new `buildChatSystemPrompt`. Extracted
+ * purely to avoid a 3rd copy-paste of this block — since string
+ * concatenation with a separator is associative, joining these lines as one
+ * nested string produces EXACTLY the same bytes as inlining them directly in
+ * the two pre-existing builders' own `.join('\n')` call, so this refactor
+ * does not change either builder's output by even one byte (verified by
+ * `agent-prompt.test.ts`, which is not touched by this step).
+ */
+function buildNodeCatalogSection(registry: NodeRegistry): string {
+  const catalog = JSON.stringify(registry.describeForAgent(), null, 2);
+  const capped = liveCatalogSnapshot ? capLiveCatalogForPrompt(liveCatalogSnapshot) : undefined;
+  return [
+    'Catalog các node type khả dụng (type, category, title, description, inputs/outputs kèm port type + required, paramsJsonSchema):',
+    catalog,
+    '',
+    buildFalCatalogSection(capped),
+    '',
+    buildOpenRouterCatalogSection(capped),
+  ].join('\n');
+}
+
 const WORKFLOW_SCHEMA_DESCRIPTION = `
 Workflow JSON schema (version 1):
 {
@@ -358,8 +382,7 @@ function fewshotBlock(title: string, userDescription: string, workflow: Workflow
  * VI/EN description into a full workflow JSON.
  */
 export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
-  const catalog = JSON.stringify(registry.describeForAgent(), null, 2);
-  const capped = liveCatalogSnapshot ? capLiveCatalogForPrompt(liveCatalogSnapshot) : undefined;
+  const nodeCatalogSection = buildNodeCatalogSection(registry);
 
   const fewshot1 = fewshotBlock(
     'viết caption và tạo ảnh minh hoạ',
@@ -377,12 +400,7 @@ export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
     '',
     WORKFLOW_SCHEMA_DESCRIPTION,
     '',
-    'Catalog các node type khả dụng (type, category, title, description, inputs/outputs kèm port type + required, paramsJsonSchema):',
-    catalog,
-    '',
-    buildFalCatalogSection(capped),
-    '',
-    buildOpenRouterCatalogSection(capped),
+    nodeCatalogSection,
     '',
     GENERATE_RULES,
     '',
@@ -398,19 +416,13 @@ export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
  * (see patch.ts) implementing the user's instruction.
  */
 export function buildEditSystemPrompt(registry: NodeRegistry, workflow: Workflow, nodeId: string): string {
-  const catalog = JSON.stringify(registry.describeForAgent(), null, 2);
+  const nodeCatalogSection = buildNodeCatalogSection(registry);
   const workflowJson = JSON.stringify(workflow, null, 2);
-  const capped = liveCatalogSnapshot ? capLiveCatalogForPrompt(liveCatalogSnapshot) : undefined;
 
   return [
     EDIT_ROLE,
     '',
-    'Catalog các node type khả dụng (type, category, title, description, inputs/outputs kèm port type + required, paramsJsonSchema):',
-    catalog,
-    '',
-    buildFalCatalogSection(capped),
-    '',
-    buildOpenRouterCatalogSection(capped),
+    nodeCatalogSection,
     '',
     'Workflow hiện tại:',
     workflowJson,
@@ -418,5 +430,92 @@ export function buildEditSystemPrompt(registry: NodeRegistry, workflow: Workflow
     `Node đích cần chỉnh sửa theo hướng dẫn của người dùng: "${nodeId}"`,
     '',
     PATCH_OPS_DESCRIPTION,
+  ].join('\n');
+}
+
+const CHAT_ROLE = `
+Bạn là AI agent của FlowForge — một copilot trò chuyện luôn hiển thị song song với canvas. Người dùng nhắn tin tự nhiên (tiếng Việt hoặc tiếng Anh) mô tả điều họ muốn; bạn có thể tạo mới, sửa, thêm hoặc xoá BẤT KỲ phần nào của workflow hiện tại bằng patch ops — không giới hạn ở 1 node đích cụ thể. Nếu workflow hiện tại chưa có node nào ("nodes" rỗng), hãy coi tin nhắn này là yêu cầu TẠO MỚI workflow từ đầu (toàn add-node/add-edge). Nếu yêu cầu của người dùng chưa đủ rõ để hành động, hoặc họ chỉ đang hỏi/trò chuyện, đừng đoán bừa — trả lời/hỏi lại và để "ops" là mảng rỗng.
+`.trim();
+
+/**
+ * SPEC-step21.md §5 — same 5 structural ops as `PATCH_OPS_DESCRIPTION`
+ * (editNode.ts's contract), phrased for the chat contract's "ops" array
+ * field instead of a bare top-level JSON array, and explicitly silent on
+ * `move-node` (node position is the user's/auto-layout's job, never the
+ * AI's — SPEC-step21.md §2). A separate constant from `PATCH_OPS_DESCRIPTION`
+ * rather than reusing it, precisely so `buildEditSystemPrompt`'s existing
+ * output (which ends with its own "trả về một MẢNG..." instruction) stays
+ * byte-for-byte unchanged.
+ */
+const CHAT_PATCH_OPS_DESCRIPTION = `
+Danh sách patch op cho phép trong "ops" (mỗi phần tử phải là đúng 1 trong các dạng sau):
+
+1. update-node — cập nhật params (merge từng key vào params hiện có của node, KHÔNG thay thế toàn bộ object params) và/hoặc label của 1 node có sẵn.
+   Ví dụ: { "op": "update-node", "nodeId": "caption", "params": { "temperature": 0.9 } }
+
+2. add-node — thêm 1 node mới vào workflow.
+   Ví dụ: { "op": "add-node", "node": { "id": "voice2", "type": "vbee.tts", "params": { "voiceCode": "hn_female_ngochuyen_full_48k-fhg" } } }
+
+3. remove-node — xoá 1 node có sẵn (mọi edge nối tới/từ node đó cũng bị xoá theo tự động).
+   Ví dụ: { "op": "remove-node", "nodeId": "illustration" }
+
+4. add-edge — thêm 1 edge nối 2 node đã tồn tại, đúng tên port có thật và đúng type tương thích.
+   Ví dụ: { "op": "add-edge", "edge": { "id": "e5", "from": { "node": "caption", "port": "text" }, "to": { "node": "voice2", "port": "text" } } }
+
+5. remove-edge — xoá 1 edge theo id.
+   Ví dụ: { "op": "remove-edge", "edgeId": "e2" }
+`.trim();
+
+const CHAT_OUTPUT_CONTRACT = `
+TRẢ VỀ DUY NHẤT 1 JSON OBJECT theo đúng dạng sau — không thêm giải thích, không bọc trong markdown, không thêm bất kỳ văn bản nào khác ngoài JSON object đó:
+{ "reply": "câu trả lời ngắn gọn bằng tiếng Việt, nói bạn vừa làm gì hoặc hỏi lại nếu thiếu thông tin", "ops": [ ... 0 hoặc nhiều patch op ... ] }
+"ops" là mảng RỖNG khi bạn chỉ trả lời/hỏi lại, không cần sửa workflow. Mỗi "id" của node/edge MỚI phải là chuỗi duy nhất, không được trùng với bất kỳ id nào đã có trong workflow hiện tại.
+`.trim();
+
+const CHAT_FEWSHOT = `
+Ví dụ:
+Người dùng: "Đổi nhiệt độ của node viết caption lên 0.9 và thêm 1 node tạo ảnh minh hoạ nối vào sau"
+Output mong đợi (CHỈ JSON object):
+{"reply":"Mình đã tăng temperature của node viết caption lên 0.9 và thêm node fal.image nối vào sau để tạo ảnh minh hoạ.","ops":[{"op":"update-node","nodeId":"caption","params":{"temperature":0.9}},{"op":"add-node","node":{"id":"illustration2","type":"fal.image","params":{"modelId":"fal-ai/flux/dev"}}},{"op":"add-edge","edge":{"id":"e10","from":{"node":"caption","port":"text"},"to":{"node":"illustration2","port":"prompt"}}}]}
+`.trim();
+
+/**
+ * System prompt for `chatTurn.ts`'s `runChatTurn()` (SPEC-step21.md §5): the
+ * single system prompt behind "every turn is a patch, even the first one" —
+ * unlike `buildGenerateSystemPrompt`/`buildEditSystemPrompt` there's no
+ * separate "generate" vs. "edit" mode, just the current workflow (which may
+ * be empty) plus an optional digest of changes the user made by hand that
+ * this turn hasn't seen yet (changeDigest.ts's `buildChangeDigest` —
+ * `''` when there's nothing to report, in which case the whole digest block
+ * is omitted).
+ */
+export function buildChatSystemPrompt(registry: NodeRegistry, workflow: Workflow, digest: string): string {
+  const nodeCatalogSection = buildNodeCatalogSection(registry);
+  const workflowJson = JSON.stringify(workflow, null, 2);
+
+  const digestBlock =
+    digest === ''
+      ? []
+      : [
+          '## Thay đổi người dùng đã tự chỉnh (bạn chưa xem)',
+          digest,
+          'Hãy tôn trọng các thay đổi này, đừng hoàn tác trừ khi được yêu cầu.',
+          '',
+        ];
+
+  return [
+    CHAT_ROLE,
+    '',
+    nodeCatalogSection,
+    '',
+    'Workflow hiện tại:',
+    workflowJson,
+    '',
+    ...digestBlock,
+    CHAT_PATCH_OPS_DESCRIPTION,
+    '',
+    CHAT_OUTPUT_CONTRACT,
+    '',
+    CHAT_FEWSHOT,
   ].join('\n');
 }
