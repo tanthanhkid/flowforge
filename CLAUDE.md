@@ -54,6 +54,7 @@ Canvas React Flow (drag từ sidebar theo category, params panel bên phải), e
 ```
 apps/server/src/{engine,nodes,agent,catalog,routes,db}
 apps/web/src/{canvas,panels,preview,store,api}
+packages/shared/  # domain PatchOp (applyPatch, PatchOpSchema...) dùng chung FE/BE — export TS source trực tiếp
 e2e/             # Playwright: free tier (mặc định, 0 đồng) + real tier (E2E_REAL=1)
 samples/         # 11 workflow mẫu + assets (seed: pnpm --filter server seed)
 data/artifacts/  # media outputs + uploads/ (gitignored)
@@ -92,12 +93,12 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
 22. ✅ Tầng HTTP: `chatTurnManager.ts` (buffer/replay/pacing patch-op, stop, LRU 200, TurnInProgressError→409) + routes `conversations.ts` (8 endpoint, SSE turn events + fallback DB, title auto từ tin đầu) + `changes.ts` (GET/POST log tay shape-validate + 409 version-conflict, revert theo snapshot ghi change mới) + digest hiện dòng revert — spec: `docs/SPEC-step22.md`
 23. ✅ ConversationRail (w-64, search, ⚠ badge, collapse) + ChatPane (bubbles, composer Enter/Shift+Enter, ■ Dừng, empty states + chip gợi ý) thay modal WorkflowList; api client + `store/chat.ts` (SSE turn events, guard isDisplayed chống race đổi conversation); `adoptWorkflow` refactor; fix latent bug Content-Type DELETE; e2e viewport 1920 + 3 test rail — spec: `docs/SPEC-step23.md`
 24. ✅ Split-pane thật: `splitRatio` (persist localStorage, snap min-width 320/420, animate 300ms) + ModeToggle Chat|Chia đôi|Canvas (badge đỏ khi turn chạy mà chat ẩn) + SplitDivider (drag + double-click) + CanvasPane luôn mounted (visibility hidden, fitView ×2 khi hiện lại) + landing hero chat-first (gõ là tự tạo conversation) + gỡ ✨ Describe (giữ ✨ edit-node) + phím tắt ⌘\ — spec: `docs/SPEC-step24.md`
-25. ⬜ `packages/shared` — tách `applyPatch` + `PatchOpSchema` dùng chung FE/BE (đôn lên trước vì bước 26 lẫn 27 đều cần applyPatch phía client)
+25. ✅ `packages/shared` — tách `applyPatch` + `PatchOpSchema` + `PatchError` + `opScope`/`changeScope` dùng chung FE/BE (đôn lên trước vì 26/27 đều cần applyPatch client). Source-export trực tiếp (`exports` → `./src/index.ts`) — tsx/vitest/vite/tsc đều resolve, KHÔNG cần build tay; `applyPatch<W extends WorkflowShape>` generic nên 2 kiểu Workflow của server/web dùng thẳng không cast; `agent/patch.ts` thành thin re-export (caller cũ giữ nguyên import path) — spec: `docs/SPEC-step25.md`
 26. ⬜ Nối SSE streaming + animation canvas theo từng patch-op (dùng shared)
 27. ⬜ Auto-log thay đổi tay (expectedVersion + hàng đợi client) + tab Lịch sử + nút Khôi phục
 28. ⬜ E2E free-tier luồng chat + revert + version-conflict (mock OpenRouter)
 
-Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 429 server + 250 web + 20 e2e tests.** Đang làm: lộ trình AI-native ở trên, vẫn theo luật orchestration.
+Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 413 server + 20 shared + 251 web + 20 e2e tests.** Đang làm: lộ trình AI-native ở trên, vẫn theo luật orchestration.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 
