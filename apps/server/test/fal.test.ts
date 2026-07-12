@@ -16,7 +16,7 @@ import type { ExecutionContext, MediaValue } from '../src/engine/types.js';
 import { mediaToImageUrl, runFalQueue } from '../src/nodes/providers/fal.js';
 import { inputTextNode } from '../src/nodes/input.text.js';
 import { falImageNode } from '../src/nodes/fal.image.js';
-import { falVideoNode } from '../src/nodes/fal.video.js';
+import { falVideoNode, setFalVideoLiveCatalog } from '../src/nodes/fal.video.js';
 
 function jsonResponse(status: number, body: unknown): Response {
   return {
@@ -466,6 +466,137 @@ describe('fal.video node — t2v + image guard (SPEC-step17.md)', () => {
     });
 
     expect((capturedSubmitBody as Record<string, unknown>).image_url).toBe('https://example.test/ref.png');
+    expect((outputs.video as MediaValue).kind).toBe('video');
+  });
+});
+
+// SPEC-step19.md §1.6 — the t2v/i2v guard also consults the live-merged
+// catalog (pushed in by routes/modelCatalog.ts via setFalVideoLiveCatalog)
+// once it's been populated, so it also blocks a live-only t2v id that isn't
+// in the hand-curated static preset list.
+describe('fal.video node — t2v + image guard against the live catalog (SPEC-step19.md §1.6)', () => {
+  afterEach(() => {
+    // Reset so this describe block never leaks its pushed catalog into
+    // another test in this file (each `it` above assumes the pre-step-19
+    // static-only default).
+    setFalVideoLiveCatalog(undefined);
+  });
+
+  it('throws for a live-only (non-preset) t2v modelId + image, once a live catalog has been pushed', async () => {
+    setFalVideoLiveCatalog([
+      { id: 'fal-ai/brand-new/text-to-video', label: 'Brand New T2V', kind: 'video-t2v', tier: 're', estUsd: 0.2, estBasis: 'x', createdAt: null, featured: false },
+    ]);
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+
+    await expect(
+      falVideoNode.execute({
+        inputs: { prompt: 'a cat', image },
+        params: { modelId: 'fal-ai/brand-new/text-to-video' },
+        ctx,
+      }),
+    ).rejects.toThrow(/là text-to-video nên sẽ bỏ qua ảnh đầu vào/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('suggests the live-catalog same-family image-to-video sibling when there is no static-preset sibling', async () => {
+    setFalVideoLiveCatalog([
+      { id: 'fal-ai/brand-new/text-to-video', label: 'Brand New T2V', kind: 'video-t2v', tier: 're', estUsd: 0.2, estBasis: 'x', createdAt: null, featured: false },
+      { id: 'fal-ai/brand-new/image-to-video', label: 'Brand New I2V', kind: 'video-i2v', tier: 're', estUsd: 0.2, estBasis: 'x', createdAt: null, featured: false },
+    ]);
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+
+    await expect(
+      falVideoNode.execute({
+        inputs: { prompt: 'a cat', image },
+        params: { modelId: 'fal-ai/brand-new/text-to-video' },
+        ctx,
+      }),
+    ).rejects.toThrow('fal-ai/brand-new/image-to-video');
+  });
+
+  it('a live-only (non-preset) i2v modelId + image does not throw', async () => {
+    const modelId = 'fal-ai/brand-new/image-to-video';
+    const resultVideoUrl = 'https://cdn.fal.ai/files/live-i2v-result.mp4';
+    const videoBytes = new Uint8Array([7, 8, 9]);
+
+    setFalVideoLiveCatalog([{ id: modelId, label: 'Brand New I2V', kind: 'video-i2v', tier: 're', estUsd: 0.2, estBasis: 'x', createdAt: null, featured: false }]);
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        return jsonResponse(200, {
+          request_id: 'live-i2v-req',
+          status_url: 'https://queue.fal.run/live-i2v/status',
+          response_url: 'https://queue.fal.run/live-i2v/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/live-i2v/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/live-i2v/response') {
+        return jsonResponse(200, { video: { url: resultVideoUrl } });
+      }
+      if (url === resultVideoUrl) {
+        return binaryResponse(200, videoBytes, 'video/mp4');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const outputs = await falVideoNode.execute({
+      inputs: { prompt: 'a cat', image },
+      params: { modelId },
+      ctx,
+    });
+    expect((outputs.video as MediaValue).kind).toBe('video');
+  });
+
+  it('still does not throw for a modelId unknown to both the static preset AND the pushed live catalog', async () => {
+    setFalVideoLiveCatalog([
+      { id: 'fal-ai/brand-new/text-to-video', label: 'Brand New T2V', kind: 'video-t2v', tier: 're', estUsd: 0.2, estBasis: 'x', createdAt: null, featured: false },
+    ]);
+    const modelId = 'fal-ai/some-other-custom-model';
+    const resultVideoUrl = 'https://cdn.fal.ai/files/still-custom-result.mp4';
+    const videoBytes = new Uint8Array([1, 1, 1]);
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        return jsonResponse(200, {
+          request_id: 'still-custom-req',
+          status_url: 'https://queue.fal.run/still-custom/status',
+          response_url: 'https://queue.fal.run/still-custom/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/still-custom/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/still-custom/response') {
+        return jsonResponse(200, { video: { url: resultVideoUrl } });
+      }
+      if (url === resultVideoUrl) {
+        return binaryResponse(200, videoBytes, 'video/mp4');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const outputs = await falVideoNode.execute({
+      inputs: { prompt: 'a cat', image },
+      params: { modelId },
+      ctx,
+    });
     expect((outputs.video as MediaValue).kind).toBe('video');
   });
 });

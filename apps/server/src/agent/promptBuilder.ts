@@ -6,6 +6,7 @@
  * registered.
  */
 import { FAL_IMAGE_MODELS, FAL_VIDEO_MODELS, type FalModelPreset } from '../catalog/falModels.js';
+import type { CatalogFalEntry, CatalogLlmEntry, CatalogTier, UnifiedCatalog } from '../catalog/live/types.js';
 import { OPENROUTER_LLM_MODELS, type OpenRouterModelPreset } from '../catalog/openrouterModels.js';
 import type { NodeRegistry } from '../engine/registry.js';
 import type { Workflow } from '../engine/schema.js';
@@ -22,38 +23,178 @@ function formatModelLine(model: FalModelPreset | OpenRouterModelPreset): string 
 }
 
 /**
- * "MODEL CATALOG (fal)" section (SPEC-step13.md §2): rendered from the same
- * curated `falModels.ts` catalog the UI's ParamsPanel select reads, so the
- * agent picks `modelId` values that are actually good defaults — while
+ * Pushed by `routes/modelCatalog.ts` after every `getCatalog()`/
+ * `refreshCatalog()` call (SPEC-step19.md §1.6), so the agent's model
+ * catalog sections below can draw on live fal.ai/OpenRouter data instead of
+ * only the hand-curated static presets. `undefined` (the default, and what
+ * every pre-step-19 caller/test keeps getting since nothing here calls this
+ * setter) -> `buildFalCatalogSection`/`buildOpenRouterCatalogSection` fall
+ * back to the exact static-preset-only rendering this module always used.
+ */
+let liveCatalogSnapshot: UnifiedCatalog | undefined;
+
+export function setPromptBuilderCatalog(catalog: UnifiedCatalog | undefined): void {
+  liveCatalogSnapshot = catalog;
+}
+
+const CATALOG_TIER_LABEL: Record<CatalogTier, string> = {
+  xin: '💎 xịn',
+  kha: '✅ khá',
+  re: '💸 rẻ',
+  unknown: '❓ chưa rõ giá',
+};
+
+/**
+ * SPEC-step19.md §1.6 — "KHÔNG nhét 1700 model vào prompt ... cap ~30 id".
+ * Every hand-curated `featured` preset is always kept in full — that's the
+ * pre-step19 behavior too (the static-only fallback below has never capped
+ * them, and there are only ~48 of them total across all 3 catalog sections,
+ * nowhere near "1700"). The ~30-id cap applies to the *live-only* long tail
+ * layered on top of those presets, as ONE shared budget across all 3
+ * sections combined (fal video + fal image + OpenRouter), not per section.
+ *
+ * Post-review fix: previously each of the 3 sections independently got its
+ * own ~30-id non-featured budget (`capCatalogEntries` reset `remaining =
+ * PROMPT_CATALOG_CAP` on every call), so a single prompt build could carry
+ * up to ~90 non-featured ids total (~30 × 3 sections) — a 3x overshoot of
+ * the spec's actual "~30 id" cap. `capLiveCatalogForPrompt` below now
+ * computes all 3 sections' non-featured candidates together and drains a
+ * single shared counter across them.
+ */
+const PROMPT_NON_FEATURED_TOTAL_CAP = 30;
+const PROMPT_PER_TIER_PER_KIND_CAP = 8;
+
+/** Per-section split of `featured` (always kept) vs. the `(kind, tier)`-bucketed non-featured candidates (top `PROMPT_PER_TIER_PER_KIND_CAP`, newest-first) — the pre-budget-allocation shape `capLiveCatalogForPrompt` shares one counter across. */
+function splitFeaturedAndCandidates<T extends { featured: boolean; tier: CatalogTier }>(
+  entries: T[],
+  kindOf: (entry: T) => string,
+): { featured: T[]; nonFeaturedCandidates: T[] } {
+  const featured = entries.filter((e) => e.featured);
+  const nonFeatured = entries.filter((e) => !e.featured);
+
+  const buckets = new Map<string, T[]>();
+  for (const entry of nonFeatured) {
+    const key = `${kindOf(entry)}::${entry.tier}`;
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(entry);
+    else buckets.set(key, [entry]);
+  }
+
+  const nonFeaturedCandidates: T[] = [];
+  for (const bucket of buckets.values()) {
+    nonFeaturedCandidates.push(...bucket.slice(0, PROMPT_PER_TIER_PER_KIND_CAP));
+  }
+  return { featured, nonFeaturedCandidates };
+}
+
+interface CappedLiveCatalogForPrompt {
+  video: CatalogFalEntry[];
+  image: CatalogFalEntry[];
+  llm: CatalogLlmEntry[];
+}
+
+/**
+ * Computes the capped (featured + shared-budget non-featured) entries for
+ * all 3 MODEL CATALOG sections together, so the ~30-id non-featured cap is
+ * enforced across the whole prompt rather than reset per section. Order
+ * (video, then image, then llm) is arbitrary but stable/deterministic.
+ */
+function capLiveCatalogForPrompt(catalog: UnifiedCatalog): CappedLiveCatalogForPrompt {
+  const video = splitFeaturedAndCandidates(catalog.falVideo, (e) => e.kind);
+  const image = splitFeaturedAndCandidates(catalog.falImage, (e) => e.kind);
+  const llm = splitFeaturedAndCandidates(catalog.openrouter, () => 'llm');
+
+  let remaining = PROMPT_NON_FEATURED_TOTAL_CAP;
+  function take<T>(candidates: T[]): T[] {
+    if (remaining <= 0) return [];
+    const picked = candidates.slice(0, remaining);
+    remaining -= picked.length;
+    return picked;
+  }
+
+  return {
+    video: [...video.featured, ...take(video.nonFeaturedCandidates)],
+    image: [...image.featured, ...take(image.nonFeaturedCandidates)],
+    llm: [...llm.featured, ...take(llm.nonFeaturedCandidates)],
+  };
+}
+
+function formatCatalogPrice(estUsd: number | null, estBasis: string): string {
+  return estUsd === null ? 'chưa rõ giá' : `~$${estUsd} (${estBasis})`;
+}
+
+function formatCatalogFalLine(model: CatalogFalEntry): string {
+  const note = model.note ? ` — ${model.note}` : '';
+  const badge = model.featured ? ' ⭐' : '';
+  return `- [${CATALOG_TIER_LABEL[model.tier]}]${badge} ${model.id} (${model.label}), giá: ${formatCatalogPrice(model.estUsd, model.estBasis)}${note}`;
+}
+
+function formatCatalogLlmLine(model: CatalogLlmEntry): string {
+  const note = model.note ? ` — ${model.note}` : '';
+  const badge = model.featured ? ' ⭐' : '';
+  return `- [${CATALOG_TIER_LABEL[model.tier]}]${badge} ${model.id} (${model.label}), giá: ${formatCatalogPrice(model.estUsd, model.estBasis)}${note}`;
+}
+
+/**
+ * "MODEL CATALOG (fal)" section (SPEC-step13.md §2, live-aware since
+ * SPEC-step19.md §1.6): once `setPromptBuilderCatalog()` has pushed a live
+ * catalog snapshot, `capped` (from `capLiveCatalogForPrompt`, shared across
+ * all 3 sections — see its own doc comment) renders instead of the raw
+ * catalog — otherwise (nothing pushed yet, `capped` undefined) falls back to
+ * the exact original static `falModels.ts`-only rendering. Either way,
  * `fal.image`/`fal.video`'s `modelId` param stays a free-form string (the
  * agent MAY still emit an id outside this list if the user names one).
  */
-function buildFalCatalogSection(): string {
+function buildFalCatalogSection(capped: CappedLiveCatalogForPrompt | undefined): string {
+  if (!capped) {
+    return [
+      'MODEL CATALOG (fal) — dùng để chọn "modelId" cho node fal.image / fal.video:',
+      '',
+      'Video:',
+      ...FAL_VIDEO_MODELS.map(formatModelLine),
+      '',
+      'Image:',
+      ...FAL_IMAGE_MODELS.map(formatModelLine),
+      '',
+      'Luật chọn tier: mặc định chọn tier "kha" (✅ khá); nếu người dùng nói "đẹp"/"xịn"/"chất lượng cao" thì chọn tier "xin" (💎 xịn); nếu người dùng nói "rẻ"/"test"/"nháp" thì chọn tier "re" (💸 rẻ). Nếu node fal.video có input "image" được nối (image-to-video), ưu tiên chọn id có kind "video-i2v".',
+    ].join('\n');
+  }
+
   return [
-    'MODEL CATALOG (fal) — dùng để chọn "modelId" cho node fal.image / fal.video:',
+    'MODEL CATALOG (fal) — dùng để chọn "modelId" cho node fal.image / fal.video. modelId LÀ CHUỖI TỰ DO: danh sách dưới đây chỉ là một phần rút gọn (ưu tiên các model ⭐ và mới nhất mỗi tier) của catalog thật, không đầy đủ — bạn có thể dùng một id fal.ai hợp lệ khác ngoài danh sách nếu người dùng nêu rõ:',
     '',
     'Video:',
-    ...FAL_VIDEO_MODELS.map(formatModelLine),
+    ...capped.video.map(formatCatalogFalLine),
     '',
     'Image:',
-    ...FAL_IMAGE_MODELS.map(formatModelLine),
+    ...capped.image.map(formatCatalogFalLine),
     '',
     'Luật chọn tier: mặc định chọn tier "kha" (✅ khá); nếu người dùng nói "đẹp"/"xịn"/"chất lượng cao" thì chọn tier "xin" (💎 xịn); nếu người dùng nói "rẻ"/"test"/"nháp" thì chọn tier "re" (💸 rẻ). Nếu node fal.video có input "image" được nối (image-to-video), ưu tiên chọn id có kind "video-i2v".',
   ].join('\n');
 }
 
 /**
- * "MODEL CATALOG (OpenRouter LLM)" section (SPEC-step14.md §2-3): rendered
- * from the same curated `openrouterModels.ts` catalog the UI's ParamsPanel
- * select reads, for `llm.generate`/`llm.transform`'s `model` param — which
- * stays a free-form string (the agent MAY still emit an id outside this
- * list if the user names one).
+ * "MODEL CATALOG (OpenRouter LLM)" section (SPEC-step14.md §2-3, live-aware
+ * since SPEC-step19.md §1.6): same fallback rule as
+ * `buildFalCatalogSection` — capped live snapshot when pushed, otherwise the
+ * exact original static `openrouterModels.ts`-only rendering. Either way,
+ * `llm.generate`/`llm.transform`'s `model` param stays a free-form string.
  */
-function buildOpenRouterCatalogSection(): string {
+function buildOpenRouterCatalogSection(capped: CappedLiveCatalogForPrompt | undefined): string {
+  if (!capped) {
+    return [
+      'MODEL CATALOG (OpenRouter LLM) — dùng để chọn "model" cho node llm.generate / llm.transform:',
+      '',
+      ...OPENROUTER_LLM_MODELS.map(formatModelLine),
+      '',
+      'Luật chọn model: mặc định để params.model = "" (chuỗi rỗng — hệ thống sẽ tự dùng model mặc định OPENROUTER_DEFAULT_MODEL), TRỪ KHI người dùng yêu cầu một model cụ thể hoặc nói rõ về chi phí/chất lượng (vd "dùng Claude", "rẻ nhất có thể", "chất lượng cao nhất") — khi đó chọn id phù hợp từ catalog trên theo cùng luật tier ở trên (mặc định "kha", "đẹp/xịn" → "xin", "rẻ/test" → "re").',
+    ].join('\n');
+  }
+
   return [
-    'MODEL CATALOG (OpenRouter LLM) — dùng để chọn "model" cho node llm.generate / llm.transform:',
+    'MODEL CATALOG (OpenRouter LLM) — dùng để chọn "model" cho node llm.generate / llm.transform. model LÀ CHUỖI TỰ DO: danh sách dưới đây chỉ là một phần rút gọn (ưu tiên các model ⭐ và mới nhất mỗi tier) của catalog thật, không đầy đủ — bạn có thể dùng một id OpenRouter hợp lệ khác ngoài danh sách nếu người dùng nêu rõ:',
     '',
-    ...OPENROUTER_LLM_MODELS.map(formatModelLine),
+    ...capped.llm.map(formatCatalogLlmLine),
     '',
     'Luật chọn model: mặc định để params.model = "" (chuỗi rỗng — hệ thống sẽ tự dùng model mặc định OPENROUTER_DEFAULT_MODEL), TRỪ KHI người dùng yêu cầu một model cụ thể hoặc nói rõ về chi phí/chất lượng (vd "dùng Claude", "rẻ nhất có thể", "chất lượng cao nhất") — khi đó chọn id phù hợp từ catalog trên theo cùng luật tier ở trên (mặc định "kha", "đẹp/xịn" → "xin", "rẻ/test" → "re").',
   ].join('\n');
@@ -218,6 +359,7 @@ function fewshotBlock(title: string, userDescription: string, workflow: Workflow
  */
 export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
   const catalog = JSON.stringify(registry.describeForAgent(), null, 2);
+  const capped = liveCatalogSnapshot ? capLiveCatalogForPrompt(liveCatalogSnapshot) : undefined;
 
   const fewshot1 = fewshotBlock(
     'viết caption và tạo ảnh minh hoạ',
@@ -238,9 +380,9 @@ export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
     'Catalog các node type khả dụng (type, category, title, description, inputs/outputs kèm port type + required, paramsJsonSchema):',
     catalog,
     '',
-    buildFalCatalogSection(),
+    buildFalCatalogSection(capped),
     '',
-    buildOpenRouterCatalogSection(),
+    buildOpenRouterCatalogSection(capped),
     '',
     GENERATE_RULES,
     '',
@@ -258,6 +400,7 @@ export function buildGenerateSystemPrompt(registry: NodeRegistry): string {
 export function buildEditSystemPrompt(registry: NodeRegistry, workflow: Workflow, nodeId: string): string {
   const catalog = JSON.stringify(registry.describeForAgent(), null, 2);
   const workflowJson = JSON.stringify(workflow, null, 2);
+  const capped = liveCatalogSnapshot ? capLiveCatalogForPrompt(liveCatalogSnapshot) : undefined;
 
   return [
     EDIT_ROLE,
@@ -265,9 +408,9 @@ export function buildEditSystemPrompt(registry: NodeRegistry, workflow: Workflow
     'Catalog các node type khả dụng (type, category, title, description, inputs/outputs kèm port type + required, paramsJsonSchema):',
     catalog,
     '',
-    buildFalCatalogSection(),
+    buildFalCatalogSection(capped),
     '',
-    buildOpenRouterCatalogSection(),
+    buildOpenRouterCatalogSection(capped),
     '',
     'Workflow hiện tại:',
     workflowJson,

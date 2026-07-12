@@ -10,14 +10,15 @@ import type {
   CreateRunBody,
   EditNodeResult,
   GenerateWorkflowResult,
-  ModelCatalog,
   NodeLogEvent,
   NodeSpec,
   NodeStateEvent,
+  RefreshCatalogResult,
   RunSnapshot,
   RunStateEvent,
   RunSummary,
   SettingSummary,
+  UnifiedCatalog,
   UploadResult,
   ValidationIssue,
   Workflow,
@@ -74,10 +75,16 @@ export async function getRegistry(): Promise<NodeSpec[]> {
   return res.nodes;
 }
 
-// ---- model catalog (SPEC-step13.md §2) -----------------------------------
+// ---- model catalog (SPEC-step19.md §1.6/§2) -------------------------------
 
-export function getModelCatalog(): Promise<ModelCatalog> {
+/** GET /api/model-catalog — the live+static merged catalog (`{ falVideo, falImage, openrouter, meta }`). */
+export function getModelCatalog(): Promise<UnifiedCatalog> {
   return request('/api/model-catalog');
+}
+
+/** POST /api/catalog/refresh — force refetch both providers now, bypassing the 24h cache TTL (the picker's ↻ button). */
+export function refreshCatalog(): Promise<RefreshCatalogResult> {
+  return request('/api/catalog/refresh', { method: 'POST' });
 }
 
 // ---- workflows --------------------------------------------------------

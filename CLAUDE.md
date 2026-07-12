@@ -83,8 +83,9 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
 16. ✅ Fix layout: node cố định 300px + nút 🪄 auto-layout theo kích thước thật
 17. ✅ Guard fal.video: ảnh + model text-to-video → chặn trước khi tốn tiền
 18. ✅ Redesign toàn bộ web "Thô Mộc Nổi Loạn" (neo-brutalist, user chọn từ 4 đề xuất) — design tokens @theme, `ui/` primitives, font Archivo subset tiếng Việt self-host, + 8 fix UX (onboarding canvas trống, minimap hiện node — root cause React Flow v12 cần `initialWidth/Height` trên user-node, fit-view sau Sắp xếp, popover portal thoát overflow, bug tab Kết quả, panOnScroll 2 ngón touchpad…) — spec: `docs/SPEC-step18.md`
+19. ✅ Catalog model ĐỘNG từ API fal.ai (~1.400 model, 35 trang keyless) + OpenRouter (345) — parser giá từ chuỗi markdown fal, tier THEO GIÁ (💎/✅/💸/❓ ngưỡng trong `catalog/live/`), cache SQLite 24h + stale-while-revalidate, `CATALOG_LIVE=0` cho test/e2e (không network), 48 preset cũ thành ⭐ featured, picker combobox search + badge MỚI + ARIA/keyboard + luôn giữ "Tự nhập" — spec: `docs/SPEC-step19.md`
 
-Hiện trạng: **13 node types, 48 model presets, 11 samples, 263 server + 128 web + 13 e2e tests.** Đang làm: step 19 — catalog model động từ API fal/OpenRouter, chia tier theo giá (`docs/SPEC-step19.md`). Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên.
+Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 335 server + 158 web + 13 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 

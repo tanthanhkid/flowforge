@@ -93,7 +93,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   app.get('/api/health', async () => ({ ok: true }));
 
   registerRegistryRoutes(app, registry);
-  registerModelCatalogRoutes(app);
+  registerModelCatalogRoutes(app, { db });
   registerWorkflowsRoutes(app, { workflowsRepo, registry });
   registerRunsRoutes(app, { runManager, workflowsRepo, db });
   registerArtifactsRoutes(app, artifactsDir);

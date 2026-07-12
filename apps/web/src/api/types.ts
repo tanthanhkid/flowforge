@@ -220,37 +220,74 @@ export interface SettingSummary {
   value?: string;
 }
 
-// ---- routes/modelCatalog.ts (GET /api/model-catalog, SPEC-step13.md §1-2, +llm SPEC-step14.md §2) --
+// ---- routes/modelCatalog.ts (GET /api/model-catalog, SPEC-step19.md §1.6) --
+//
+// Replaces the old static-only { video, image, llm } shape (SPEC-step13.md
+// §1-2 / SPEC-step14.md §2) with the live+static merged catalog — mirrors
+// apps/server/src/catalog/live/types.ts's `CatalogFalEntry`/`CatalogLlmEntry`/
+// `UnifiedCatalog` exactly (that module is the source of truth for this
+// shape; see SPEC-step19.md §1.5/§1.6 for how `featured`/`tier`/`estUsd` are
+// derived).
 
-export interface FalModelPreset {
+/** fal.ai category bucket this catalog cares about. */
+export type CatalogFalKind = 'image' | 'video-t2v' | 'video-i2v';
+
+/** Price tier, now derived purely from `estUsd` (SPEC-step19.md §1.3) — `'unknown'` when `estUsd` is null (price couldn't be parsed/estimated). */
+export type CatalogTier = 'xin' | 'kha' | 're' | 'unknown';
+
+export interface CatalogFalEntry {
   id: string;
   label: string;
-  tier: 'xin' | 'kha' | 're';
-  cost: string;
-  note?: string;
-  kind: 'video-t2v' | 'video-i2v' | 'image';
-  /** Machine-readable estimate (SPEC-step15.md §1), used by the toolbar's 💰 badge. */
-  estUsd: number;
+  kind: CatalogFalKind;
+  tier: CatalogTier;
+  /** null = giá không xác định được (không đoán bừa) — UI hiển thị ❓. */
+  estUsd: number | null;
   estBasis: string;
+  note?: string;
+  /** epoch ms, null if unknown. */
+  createdAt: number | null;
+  /** true = cũng có trong preset tĩnh tay-curated (label/note/estUsd đáng tin hơn). */
+  featured: boolean;
 }
 
-export interface OpenRouterModelPreset {
+export interface CatalogLlmEntry {
   id: string;
   label: string;
-  tier: 'xin' | 'kha' | 're';
-  /** "$X in / $Y out per 1M tokens". */
-  cost: string;
-  note?: string;
-  kind: 'llm';
-  /** Machine-readable estimate (SPEC-step15.md §1), used by the toolbar's 💰 badge. */
-  estUsd: number;
+  tier: CatalogTier;
+  estUsd: number | null;
   estBasis: string;
+  note?: string;
+  createdAt: number | null;
+  featured: boolean;
+  /** USD per 1M input/output tokens — present when this id was seen live (both live-only and featured-matched-to-live entries); absent for a featured preset with no live match. */
+  per1MIn?: number;
+  per1MOut?: number;
+  contextLength?: number | null;
 }
 
-export interface ModelCatalog {
-  video: FalModelPreset[];
-  image: FalModelPreset[];
-  llm: OpenRouterModelPreset[];
+export type CatalogSource = 'live' | 'live-stale' | 'static';
+
+export interface CatalogMeta {
+  source: CatalogSource;
+  /** epoch ms of the underlying live fetch this response is based on; null when source === 'static'. */
+  fetchedAt: number | null;
+  counts: { falVideo: number; falImage: number; openrouter: number };
+}
+
+export interface UnifiedCatalog {
+  falVideo: CatalogFalEntry[];
+  falImage: CatalogFalEntry[];
+  openrouter: CatalogLlmEntry[];
+  meta: CatalogMeta;
+}
+
+// ---- POST /api/catalog/refresh (SPEC-step19.md §1.4) ---------------------
+
+export interface RefreshCatalogResult {
+  counts: { falVideo: number; falImage: number; openrouter: number };
+  /** null only when `source: 'static'` (server-side CATALOG_LIVE=0 — no fetch ever happened). */
+  fetchedAt: number | null;
+  source: CatalogSource;
 }
 
 // ---- routes/estimate.ts (POST /api/estimate, SPEC-step15.md §2) --------

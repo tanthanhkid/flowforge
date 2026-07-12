@@ -1,6 +1,6 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { FalModelPreset, NodeSpec, OpenRouterModelPreset, Workflow } from '../src/api/types.ts';
+import type { CatalogFalEntry, CatalogLlmEntry, NodeSpec, UnifiedCatalog, Workflow } from '../src/api/types.ts';
 import { ParamsPanel } from '../src/panels/ParamsPanel.tsx';
 import { useFlowStore } from '../src/store/flow.ts';
 
@@ -29,12 +29,22 @@ const spec: NodeSpec = {
   },
 };
 
+/** SPEC-step19.md §1.6 — empty `UnifiedCatalog`, the store's own default shape. */
+function emptyCatalog(): UnifiedCatalog {
+  return {
+    falVideo: [],
+    falImage: [],
+    openrouter: [],
+    meta: { source: 'static', fetchedAt: null, counts: { falVideo: 0, falImage: 0, openrouter: 0 } },
+  };
+}
+
 function resetStore(workflow: Workflow): void {
   useFlowStore.setState({
     workflow,
     selectedNodeId: workflow.nodes[0]?.id ?? null,
     registry: [spec],
-    modelCatalog: { video: [], image: [], llm: [] },
+    modelCatalog: emptyCatalog(),
     runId: undefined,
     runStatus: undefined,
     nodeRuns: {},
@@ -254,7 +264,7 @@ describe('ParamsPanel — file upload (SPEC-step10.md §2)', () => {
 
 // SPEC-step13.md §3 — fal.image/fal.video's `modelId` param: tiered select
 // over the model catalog + "✏️ Tự nhập model id..." free-text escape hatch.
-describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
+describe('ParamsPanel — model catalog select (SPEC-step19.md §2)', () => {
   const falImageSpec: NodeSpec = {
     type: 'fal.image',
     category: 'image',
@@ -279,15 +289,15 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
     },
   };
 
-  const imageModels: FalModelPreset[] = [
-    { id: 'fal-ai/flux-pro/v1.1-ultra', label: 'FLUX 1.1 pro ultra', tier: 'xin', cost: '~$0.05/ảnh', kind: 'image', estUsd: 0.05, estBasis: 'per image' },
-    { id: 'fal-ai/flux/dev', label: 'FLUX.1 dev', tier: 'kha', cost: '~$0.025/mp', kind: 'image', estUsd: 0.025, estBasis: 'per image' },
-    { id: 'fal-ai/flux/schnell', label: 'FLUX.1 schnell', tier: 're', cost: '~$0.003/mp', note: 'test/nháp', kind: 'image', estUsd: 0.003, estBasis: 'per image' },
+  const imageModels: CatalogFalEntry[] = [
+    { id: 'fal-ai/flux-pro/v1.1-ultra', label: 'FLUX 1.1 pro ultra', tier: 'xin', kind: 'image', estUsd: 0.05, estBasis: 'per image', createdAt: null, featured: true },
+    { id: 'fal-ai/flux/dev', label: 'FLUX.1 dev', tier: 'kha', kind: 'image', estUsd: 0.025, estBasis: 'per image', createdAt: null, featured: true },
+    { id: 'fal-ai/flux/schnell', label: 'FLUX.1 schnell', tier: 're', note: 'test/nháp', kind: 'image', estUsd: 0.003, estBasis: 'per image', createdAt: null, featured: false },
   ];
 
-  const videoModels: FalModelPreset[] = [
-    { id: 'fal-ai/kling-video/t2v', label: 'Kling t2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-t2v', estUsd: 0.35, estBasis: 'per 5s clip' },
-    { id: 'fal-ai/kling-video/i2v', label: 'Kling i2v', tier: 'xin', cost: '~$0.35/5s', kind: 'video-i2v', estUsd: 0.35, estBasis: 'per 5s clip' },
+  const videoModels: CatalogFalEntry[] = [
+    { id: 'fal-ai/kling-video/t2v', label: 'Kling t2v', tier: 'xin', kind: 'video-t2v', estUsd: 0.35, estBasis: 'per 5s clip', createdAt: null, featured: true },
+    { id: 'fal-ai/kling-video/i2v', label: 'Kling i2v', tier: 'xin', kind: 'video-i2v', estUsd: 0.35, estBasis: 'per 5s clip', createdAt: null, featured: true },
   ];
 
   function renderModelIdNode(spec: NodeSpec, params: Record<string, unknown>, edges: Workflow['edges'] = []): void {
@@ -300,39 +310,64 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
     });
     useFlowStore.setState({
       registry: [spec],
-      modelCatalog: { video: videoModels, image: imageModels, llm: [] },
+      modelCatalog: { ...emptyCatalog(), falVideo: videoModels, falImage: imageModels },
     });
     render(<ParamsPanel />);
   }
 
-  it('shows all 3 tier groups for fal.image', () => {
+  /** Opens the (sole, on these node specs) ModelPicker's dropdown. */
+  function openPicker(): void {
+    fireEvent.click(screen.getByTestId('model-picker-trigger'));
+  }
+
+  it('shows the matched preset label + price on the closed trigger', () => {
     renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
-    const select = screen.getByRole('combobox');
-    const optgroups = select.querySelectorAll('optgroup');
-    expect(Array.from(optgroups).map((g) => g.getAttribute('label'))).toEqual(['💎 Xịn', '✅ Khá', '💸 Rẻ']);
-    expect(select).toHaveValue('fal-ai/flux/dev');
+    expect(screen.getByTestId('model-picker-trigger')).toHaveTextContent('FLUX.1 dev');
+    expect(screen.getByTestId('model-picker-trigger')).toHaveTextContent('$0.025/ảnh');
   });
 
-  it('selecting a preset updates params.modelId', () => {
+  it('opening the picker shows all 3 tier groups + the "Tự nhập" row for fal.image', () => {
     renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: 'fal-ai/flux-pro/v1.1-ultra' } });
+    openPicker();
+    expect(screen.getByTestId('model-picker-tier-xin')).toHaveTextContent('💎 Xịn');
+    expect(screen.getByTestId('model-picker-tier-kha')).toHaveTextContent('✅ Khá');
+    expect(screen.getByTestId('model-picker-tier-re')).toHaveTextContent('💸 Rẻ');
+    expect(screen.queryByTestId('model-picker-tier-unknown')).not.toBeInTheDocument();
+    expect(screen.getByTestId('model-picker-custom')).toHaveTextContent('Tự nhập model id');
+  });
+
+  it('the search box filters rows by id or label', () => {
+    renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
+    openPicker();
+    fireEvent.change(screen.getByTestId('model-picker-search'), { target: { value: 'schnell' } });
+    expect(screen.getByTestId('model-picker-option-fal-ai/flux/schnell')).toBeInTheDocument();
+    expect(screen.queryByTestId('model-picker-option-fal-ai/flux/dev')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('model-picker-option-fal-ai/flux-pro/v1.1-ultra')).not.toBeInTheDocument();
+    // The custom escape hatch stays reachable even when the search matches nothing in the catalog (spec §2).
+    expect(screen.getByTestId('model-picker-custom')).toBeInTheDocument();
+  });
+
+  it('selecting a preset updates params.modelId and closes the picker', () => {
+    renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
+    openPicker();
+    fireEvent.click(screen.getByTestId('model-picker-option-fal-ai/flux-pro/v1.1-ultra'));
     expect(useFlowStore.getState().workflow.nodes[0]?.params.modelId).toBe('fal-ai/flux-pro/v1.1-ultra');
+    expect(screen.queryByTestId('model-picker-search')).not.toBeInTheDocument();
   });
 
-  it('an unknown modelId value puts the select into custom mode with a free-text input showing that value', () => {
+  it('an unknown modelId value shows a free-text input with that value on the closed picker (no need to open it)', () => {
     renderModelIdNode(falImageSpec, { modelId: 'fal-ai/some-other-model' });
-    const select = screen.getByRole('combobox');
-    expect(select).toHaveValue('__custom__');
+    expect(screen.getByTestId('model-picker-trigger')).toHaveTextContent('fal-ai/some-other-model');
     expect(screen.getByDisplayValue('fal-ai/some-other-model')).toBeInTheDocument();
   });
 
-  it('switching to "Tự nhập model id..." keeps the current value and shows a free-text input', () => {
+  it('switching to "✏️ Tự nhập model id..." keeps the current value and shows a free-text input', () => {
     renderModelIdNode(falImageSpec, { modelId: 'fal-ai/flux/dev' });
-    const select = screen.getByRole('combobox');
-    fireEvent.change(select, { target: { value: '__custom__' } });
+    openPicker();
+    fireEvent.click(screen.getByTestId('model-picker-custom'));
     expect(useFlowStore.getState().workflow.nodes[0]?.params.modelId).toBe('fal-ai/flux/dev');
     expect(screen.getByDisplayValue('fal-ai/flux/dev')).toBeInTheDocument();
+    expect(screen.queryByTestId('model-picker-search')).not.toBeInTheDocument();
   });
 
   it('typing into the custom text input updates params.modelId', () => {
@@ -346,13 +381,11 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
     renderModelIdNode(falVideoSpec, { modelId: 'fal-ai/kling-video/t2v' }, [
       { id: 'e1', from: { node: 'src', port: 'image' }, to: { node: 'n1', port: 'image' } },
     ]);
-    const select = screen.getByRole('combobox');
-    const options = Array.from(select.querySelectorAll('option')).map((o) => o.value);
-    const i2vIndex = options.indexOf('fal-ai/kling-video/i2v');
-    const t2vIndex = options.indexOf('fal-ai/kling-video/t2v');
-    expect(i2vIndex).toBeGreaterThanOrEqual(0);
-    expect(t2vIndex).toBeGreaterThanOrEqual(0);
-    expect(i2vIndex).toBeLessThan(t2vIndex);
+    openPicker();
+    const i2vOption = screen.getByTestId('model-picker-option-fal-ai/kling-video/i2v');
+    const t2vOption = screen.getByTestId('model-picker-option-fal-ai/kling-video/t2v');
+    // i2v renders before t2v in the DOM within their shared "xin" tier group.
+    expect(i2vOption.compareDocumentPosition(t2vOption) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   // SPEC-step17.md — real-money bug: a t2v model silently ignores a
@@ -383,9 +416,9 @@ describe('ParamsPanel — model catalog select (SPEC-step13.md §3)', () => {
   });
 });
 
-// SPEC-step14.md §3/§4 — llm.generate/llm.transform's `model` param: same
-// tiered select pattern, plus a leading "🔧 Mặc định hệ thống" option -> ''.
-describe('ParamsPanel — llm model catalog select (SPEC-step14.md §3)', () => {
+// SPEC-step19.md §2 — llm.generate/llm.transform's `model` param: same
+// ModelPicker, plus a leading "🔧 Mặc định hệ thống" option -> ''.
+describe('ParamsPanel — llm model catalog select (SPEC-step19.md §2)', () => {
   const llmGenerateSpec: NodeSpec = {
     type: 'llm.generate',
     category: 'llm',
@@ -398,10 +431,10 @@ describe('ParamsPanel — llm model catalog select (SPEC-step14.md §3)', () => 
     },
   };
 
-  const llmModels: OpenRouterModelPreset[] = [
-    { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', tier: 'xin', cost: '$3 in / $15 out per 1M tokens', kind: 'llm', estUsd: 0.0099, estBasis: 'per call' },
-    { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'kha', cost: '$0.3 in / $2.5 out per 1M tokens', kind: 'llm', estUsd: 0.00149, estBasis: 'per call' },
-    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B', tier: 're', cost: '$0.1 in / $0.32 out per 1M tokens', kind: 'llm', estUsd: 0.00024, estBasis: 'per call' },
+  const llmModels: CatalogLlmEntry[] = [
+    { id: 'anthropic/claude-sonnet-4.5', label: 'Claude Sonnet 4.5', tier: 'xin', estUsd: 0.0099, estBasis: 'per call', createdAt: null, featured: true, per1MIn: 3, per1MOut: 15 },
+    { id: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash', tier: 'kha', estUsd: 0.00149, estBasis: 'per call', createdAt: null, featured: true, per1MIn: 0.3, per1MOut: 2.5 },
+    { id: 'meta-llama/llama-3.3-70b-instruct', label: 'Llama 3.3 70B', tier: 're', estUsd: 0.00024, estBasis: 'per call', createdAt: null, featured: false, per1MIn: 0.1, per1MOut: 0.32 },
   ];
 
   function renderLlmNode(params: Record<string, unknown>): void {
@@ -414,35 +447,37 @@ describe('ParamsPanel — llm model catalog select (SPEC-step14.md §3)', () => 
     });
     useFlowStore.setState({
       registry: [llmGenerateSpec],
-      modelCatalog: { video: [], image: [], llm: llmModels },
+      modelCatalog: { ...emptyCatalog(), openrouter: llmModels },
     });
     render(<ParamsPanel />);
   }
 
-  it('renders a select for "model" with the default option first, then the 3 tier groups', () => {
+  function openPicker(): void {
+    fireEvent.click(screen.getByTestId('model-picker-trigger'));
+  }
+
+  it('shows "🔧 Mặc định hệ thống" on the closed trigger when model is empty', () => {
     renderLlmNode({ model: '' });
-    const selects = screen.getAllByRole('combobox');
-    const modelSelect = selects.find((s) => within(s).queryByText(/Mặc định hệ thống/)) as HTMLSelectElement;
-    expect(modelSelect).toBeDefined();
-    const options = Array.from(modelSelect.querySelectorAll('option, optgroup'));
-    expect(options[0]?.tagName).toBe('OPTION');
-    expect(options[0]?.textContent).toContain('Mặc định hệ thống');
-    expect(modelSelect).toHaveValue('');
+    expect(screen.getByTestId('model-picker-trigger')).toHaveTextContent('Mặc định hệ thống');
+  });
+
+  it('opening the picker shows the default option pinned above the tier groups', () => {
+    renderLlmNode({ model: '' });
+    openPicker();
+    expect(screen.getByTestId('model-picker-default')).toHaveTextContent('Mặc định hệ thống');
+    expect(screen.getByTestId('model-picker-option-anthropic/claude-sonnet-4.5')).toHaveTextContent('$3 + $15 /1M');
   });
 
   it('choosing a preset sets params.model to that id', () => {
     renderLlmNode({ model: '' });
-    const selects = screen.getAllByRole('combobox');
-    const modelSelect = selects.find((s) => within(s).queryByText(/Mặc định hệ thống/)) as HTMLSelectElement;
-    fireEvent.change(modelSelect, { target: { value: 'anthropic/claude-sonnet-4.5' } });
+    openPicker();
+    fireEvent.click(screen.getByTestId('model-picker-option-anthropic/claude-sonnet-4.5'));
     expect(useFlowStore.getState().workflow.nodes[0]?.params.model).toBe('anthropic/claude-sonnet-4.5');
   });
 
-  it('custom free-text model id still works via "Tự nhập model id..."', () => {
+  it('custom free-text model id still works via "✏️ Tự nhập model id..."', () => {
     renderLlmNode({ model: 'some/custom-model' });
-    const selects = screen.getAllByRole('combobox');
-    const modelSelect = selects.find((s) => within(s).queryByText(/Mặc định hệ thống/)) as HTMLSelectElement;
-    expect(modelSelect).toHaveValue('__custom__');
+    expect(screen.getByTestId('model-picker-trigger')).toHaveTextContent('some/custom-model');
     expect(screen.getByDisplayValue('some/custom-model')).toBeInTheDocument();
     const input = screen.getByDisplayValue('some/custom-model');
     fireEvent.change(input, { target: { value: 'some/other-model' } });

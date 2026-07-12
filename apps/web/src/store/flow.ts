@@ -8,12 +8,12 @@ import * as api from '../api/client.ts';
 import { ApiError } from '../api/client.ts';
 import type {
   CostEstimate,
-  ModelCatalog,
   NodeRunRecord,
   NodeSpec,
   NodeState,
   PortValue,
   RunStatus,
+  UnifiedCatalog,
   ValidationIssue,
   Workflow,
   WorkflowEdge,
@@ -38,11 +38,12 @@ export interface FlowState {
   selectedNodeId: string | null;
   registry: NodeSpec[];
   /**
-   * SPEC-step13.md §3 — fal.image/fal.video model presets, fetched once
-   * alongside the registry. `llm` added by SPEC-step14.md §2/§3 for
-   * llm.generate/llm.transform's `model` param.
+   * SPEC-step19.md §1.6/§2 — the live+static merged fal.ai/OpenRouter model
+   * catalog (`{ falVideo, falImage, openrouter, meta }`), fetched once
+   * alongside the registry. Replaces the old static-only `{ video, image,
+   * llm }` shape from SPEC-step13.md §3/SPEC-step14.md §2.
    */
-  modelCatalog: ModelCatalog;
+  modelCatalog: UnifiedCatalog;
   runId?: string;
   runStatus?: RunStatus;
   nodeRuns: Record<string, NodeRunUiState>;
@@ -120,6 +121,15 @@ export interface FlowState {
   loadRegistry(): Promise<void>;
   /** See `modelCatalog` above. */
   loadCatalog(): Promise<void>;
+  /**
+   * SPEC-step19.md §2 — the picker's "↻" button: force a live refetch
+   * server-side (`POST /api/catalog/refresh`, bypassing the 24h cache TTL),
+   * then reload `modelCatalog` from the now-fresh cache. Propagates any
+   * error to the caller (ModelPicker shows it inline) rather than failing
+   * silently like `refreshEstimate` — the user explicitly asked for a
+   * refresh and should know if it didn't work.
+   */
+  refreshModelCatalog(): Promise<void>;
   newWorkflow(): void;
   loadWorkflow(id: string): Promise<void>;
   saveWorkflow(): Promise<void>;
@@ -288,7 +298,12 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   workflow: emptyWorkflow(),
   selectedNodeId: null,
   registry: [],
-  modelCatalog: { video: [], image: [], llm: [] },
+  modelCatalog: {
+    falVideo: [],
+    falImage: [],
+    openrouter: [],
+    meta: { source: 'static', fetchedAt: null, counts: { falVideo: 0, falImage: 0, openrouter: 0 } },
+  },
   runId: undefined,
   runStatus: undefined,
   nodeRuns: {},
@@ -309,6 +324,12 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   },
 
   async loadCatalog() {
+    const modelCatalog = await api.getModelCatalog();
+    set({ modelCatalog });
+  },
+
+  async refreshModelCatalog() {
+    await api.refreshCatalog();
     const modelCatalog = await api.getModelCatalog();
     set({ modelCatalog });
   },

@@ -9,6 +9,7 @@ CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, workflow_id TEXT, workflow
 CREATE TABLE IF NOT EXISTS node_runs (run_id TEXT, node_id TEXT, state TEXT NOT NULL, outputs_json TEXT, error TEXT, logs_json TEXT, cache_hit INTEGER DEFAULT 0, started_at INTEGER, finished_at INTEGER, PRIMARY KEY (run_id, node_id));
 CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, node_type TEXT, outputs_json TEXT NOT NULL, created_at INTEGER);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS catalog_cache (provider TEXT PRIMARY KEY, fetched_at INTEGER, payload TEXT);
 `;
 
 export function openDb(path: string): Database.Database {

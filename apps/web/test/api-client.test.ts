@@ -5,17 +5,19 @@ import {
   createWorkflow,
   deleteWorkflow,
   estimateWorkflowCost,
+  getModelCatalog,
   getRegistry,
   getRun,
   getWorkflow,
   listRuns,
   listWorkflows,
   openRunEvents,
+  refreshCatalog,
   updateWorkflow,
   uploadFile,
   validateWorkflow,
 } from '../src/api/client.ts';
-import type { Workflow } from '../src/api/types.ts';
+import type { UnifiedCatalog, Workflow } from '../src/api/types.ts';
 
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -102,6 +104,42 @@ describe('api client (CRUD + validate + runs)', () => {
     expect(url).toBe('/api/estimate');
     expect(init.method).toBe('POST');
     expect(JSON.parse(init.body as string)).toEqual(sampleWorkflow);
+  });
+
+  it('getModelCatalog: GET /api/model-catalog, returns the unified { falVideo, falImage, openrouter, meta } shape (SPEC-step19.md §1.6)', async () => {
+    const catalog: UnifiedCatalog = {
+      falVideo: [],
+      falImage: [],
+      openrouter: [],
+      meta: { source: 'static', fetchedAt: null, counts: { falVideo: 0, falImage: 0, openrouter: 0 } },
+    };
+    fetchMock.mockResolvedValueOnce(jsonResponse(catalog));
+    const res = await getModelCatalog();
+    expect(res).toEqual(catalog);
+    expect(lastCall()[0]).toBe('/api/model-catalog');
+  });
+
+  it('refreshCatalog: POST /api/catalog/refresh (SPEC-step19.md §1.4 — the picker\'s ↻ button)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ counts: { falVideo: 10, falImage: 5, openrouter: 300 }, fetchedAt: 12345, source: 'live' }),
+    );
+    const res = await refreshCatalog();
+    expect(res).toEqual({ counts: { falVideo: 10, falImage: 5, openrouter: 300 }, fetchedAt: 12345, source: 'live' });
+    const [url, init] = lastCall();
+    expect(url).toBe('/api/catalog/refresh');
+    expect(init.method).toBe('POST');
+  });
+
+  // Post-review fix: CATALOG_LIVE=0 (server-side) must make POST
+  // /api/catalog/refresh itself a no-network no-op — it returns the
+  // static-only counts with source: 'static' and a null fetchedAt rather
+  // than ever attempting a fetch.
+  it('refreshCatalog: passes through a static (CATALOG_LIVE=0) result unchanged', async () => {
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse({ counts: { falVideo: 24, falImage: 12, openrouter: 12 }, fetchedAt: null, source: 'static' }),
+    );
+    const res = await refreshCatalog();
+    expect(res).toEqual({ counts: { falVideo: 24, falImage: 12, openrouter: 12 }, fetchedAt: null, source: 'static' });
   });
 
   it('createRun: POST /api/runs with the given body', async () => {

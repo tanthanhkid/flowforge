@@ -6,8 +6,32 @@
 import { z } from 'zod';
 import { downloadBinary } from '../lib/http.js';
 import { FAL_VIDEO_MODELS } from '../catalog/falModels.js';
+import type { CatalogFalEntry } from '../catalog/live/types.js';
 import type { MediaValue, NodeDefinition } from '../engine/types.js';
 import { mediaToImageUrl, runFalQueue } from './providers/fal.js';
+
+/**
+ * Pushed by `routes/modelCatalog.ts` after every `getCatalog()`/
+ * `refreshCatalog()` call (SPEC-step19.md §1.6) so the t2v/i2v guard below
+ * also recognizes fal.ai video models outside the static preset list (e.g.
+ * a brand-new t2v model fal.ai ships that isn't hand-curated into
+ * `catalog/falModels.ts` yet). `undefined` (the default, and what every test
+ * that never calls this keeps getting) -> the guard falls back to exactly
+ * the SPEC-step17.md static-preset-only behavior.
+ */
+let liveVideoCatalog: CatalogFalEntry[] | undefined;
+
+export function setFalVideoLiveCatalog(entries: CatalogFalEntry[] | undefined): void {
+  liveVideoCatalog = entries;
+}
+
+/** Static preset first, then the live-merged catalog snapshot (if pushed) — undefined means truly unknown to both (SPEC-step17.md "custom model ids not in the catalog are left alone"). */
+function findKind(modelId: string): 'video-t2v' | 'video-i2v' | undefined {
+  const preset = FAL_VIDEO_MODELS.find((m) => m.id === modelId);
+  if (preset && preset.kind !== 'image') return preset.kind;
+  const live = liveVideoCatalog?.find((m) => m.id === modelId);
+  return live && live.kind !== 'image' ? live.kind : undefined;
+}
 
 /**
  * Best-effort "same family" image-to-video suggestion for a text-to-video
@@ -19,7 +43,11 @@ import { mediaToImageUrl, runFalQueue } from './providers/fal.js';
  */
 function findI2VSibling(modelId: string): string | undefined {
   const prefix = modelId.split('/').slice(0, -1).join('/');
-  return FAL_VIDEO_MODELS.find((m) => m.kind === 'video-i2v' && m.id.split('/').slice(0, -1).join('/') === prefix)?.id;
+  const staticSibling = FAL_VIDEO_MODELS.find(
+    (m) => m.kind === 'video-i2v' && m.id.split('/').slice(0, -1).join('/') === prefix,
+  )?.id;
+  if (staticSibling) return staticSibling;
+  return liveVideoCatalog?.find((m) => m.kind === 'video-i2v' && m.id.split('/').slice(0, -1).join('/') === prefix)?.id;
 }
 
 const ParamsSchema = z.object({
@@ -74,8 +102,8 @@ export const falVideoNode: NodeDefinition<Params> = {
       // text-to-video model silently ignores image_url — catch it here, not
       // after billing. Custom model ids not in the catalog are left alone
       // (we genuinely can't know their kind).
-      const preset = FAL_VIDEO_MODELS.find((m) => m.id === params.modelId);
-      if (preset?.kind === 'video-t2v') {
+      const kind = findKind(params.modelId);
+      if (kind === 'video-t2v') {
         const sibling = findI2VSibling(params.modelId);
         throw new Error(
           `Model "${params.modelId}" là text-to-video nên sẽ bỏ qua ảnh đầu vào. Chọn bản image-to-video` +

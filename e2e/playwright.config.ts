@@ -85,6 +85,11 @@ export default defineConfig({
         PORT: String(SERVER_PORT),
         FLOWFORGE_DB_PATH: path.join(tmpDir, 'e2e.db'),
         FLOWFORGE_ARTIFACTS_DIR: path.join(tmpDir, 'artifacts'),
+        // SPEC-step19.md §3: e2e must never touch the real network — forces
+        // GET /api/model-catalog / POST /api/catalog/refresh to always use
+        // the static presets (`meta.source: 'static'`), no fal.ai/OpenRouter
+        // fetch attempted.
+        CATALOG_LIVE: '0',
       },
     },
     {

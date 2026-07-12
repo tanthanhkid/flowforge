@@ -8,11 +8,12 @@
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { FAL_IMAGE_MODELS, FAL_VIDEO_MODELS } from '../src/catalog/falModels.js';
+import type { UnifiedCatalog } from '../src/catalog/live/types.js';
 import { OPENROUTER_LLM_MODELS } from '../src/catalog/openrouterModels.js';
 import { findRepoRoot } from '../src/config.js';
-import { DISCLAIMER, estimateWorkflowCost } from '../src/engine/costEstimate.js';
+import { DISCLAIMER, estimateWorkflowCost, setLiveCatalogForCostEstimate } from '../src/engine/costEstimate.js';
 import type { Workflow } from '../src/engine/schema.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -162,5 +163,176 @@ describe('estimateWorkflowCost', () => {
     const projectedRealTotal = 3 * grok.estUsd + 0.02 + kling.estUsd;
     expect(projectedRealTotal).toBeGreaterThan(0.3);
     expect(projectedRealTotal).toBeLessThan(0.5);
+  });
+});
+
+function makeCatalog(overrides: Partial<UnifiedCatalog> = {}): UnifiedCatalog {
+  return {
+    falVideo: [],
+    falImage: [],
+    openrouter: [],
+    meta: { source: 'live', fetchedAt: Date.now(), counts: { falVideo: 0, falImage: 0, openrouter: 0 } },
+    ...overrides,
+  };
+}
+
+// SPEC-step19.md §1.6 — "lookup estUsd live-merge trước, preset tĩnh sau,
+// không có -> behavior 'không rõ giá' hiện tại": estimateWorkflowCost(wf)
+// (no 2nd arg, no setLiveCatalogForCostEstimate call) is exercised by every
+// test above and is untouched by this describe block — every test here
+// resets the pushed snapshot back to undefined afterward.
+describe('estimateWorkflowCost — live catalog lookup (SPEC-step19.md §1.6)', () => {
+  afterEach(() => {
+    setLiveCatalogForCostEstimate(undefined);
+  });
+
+  it('resolves a live-only fal.video id (not in the static preset) once a catalog snapshot is pushed', () => {
+    setLiveCatalogForCostEstimate(
+      makeCatalog({
+        falVideo: [
+          {
+            id: 'fal-ai/brand-new/text-to-video',
+            label: 'Brand New T2V',
+            kind: 'video-t2v',
+            tier: 're',
+            estUsd: 0.42,
+            estBasis: 'per 5s clip (live)',
+            createdAt: Date.now(),
+            featured: false,
+          },
+        ],
+      }),
+    );
+    const result = estimateWorkflowCost({
+      version: 1,
+      id: 'wf-x',
+      name: 'x',
+      nodes: [{ id: 'v', type: 'fal.video', params: { modelId: 'fal-ai/brand-new/text-to-video' } }],
+      edges: [],
+    });
+    expect(result.nodes[0]!.usd).toBeCloseTo(0.42, 6);
+    expect(result.unknownCount).toBe(0);
+  });
+
+  it('scales a live-only fal.video id by duration just like a static preset', () => {
+    setLiveCatalogForCostEstimate(
+      makeCatalog({
+        falVideo: [
+          {
+            id: 'fal-ai/brand-new/text-to-video',
+            label: 'Brand New T2V',
+            kind: 'video-t2v',
+            tier: 're',
+            estUsd: 0.4,
+            estBasis: 'per 5s clip (live)',
+            createdAt: null,
+            featured: false,
+          },
+        ],
+      }),
+    );
+    const result = estimateWorkflowCost({
+      version: 1,
+      id: 'wf-x',
+      name: 'x',
+      nodes: [{ id: 'v', type: 'fal.video', params: { modelId: 'fal-ai/brand-new/text-to-video', duration: 10 } }],
+      edges: [],
+    });
+    expect(result.nodes[0]!.usd).toBeCloseTo(0.8, 6);
+  });
+
+  it('a live entry with estUsd: null (unparseable fal price) is "unknown", not a crash', () => {
+    setLiveCatalogForCostEstimate(
+      makeCatalog({
+        falImage: [
+          {
+            id: 'fal-ai/brand-new/some-image-model',
+            label: 'Brand New Image',
+            kind: 'image',
+            tier: 'unknown',
+            estUsd: null,
+            estBasis: 'không xác định được đơn giá chuẩn hoá',
+            createdAt: null,
+            featured: false,
+          },
+        ],
+      }),
+    );
+    const result = estimateWorkflowCost({
+      version: 1,
+      id: 'wf-x',
+      name: 'x',
+      nodes: [{ id: 'img', type: 'fal.image', params: { modelId: 'fal-ai/brand-new/some-image-model' } }],
+      edges: [],
+    });
+    expect(result.nodes[0]!.usd).toBeNull();
+    expect(result.unknownCount).toBe(1);
+  });
+
+  it('a static preset id still resolves to the exact same estUsd via the live-merged catalog (matches the pre-step-19 static-only value)', () => {
+    const preset = FAL_IMAGE_MODELS[0]!;
+    setLiveCatalogForCostEstimate(
+      makeCatalog({
+        falImage: [
+          {
+            id: preset.id,
+            label: preset.label,
+            kind: 'image',
+            tier: preset.tier,
+            estUsd: preset.estUsd,
+            estBasis: preset.estBasis,
+            createdAt: null,
+            featured: true,
+          },
+        ],
+      }),
+    );
+    const result = estimateWorkflowCost({
+      version: 1,
+      id: 'wf-x',
+      name: 'x',
+      nodes: [{ id: 'img', type: 'fal.image', params: { modelId: preset.id } }],
+      edges: [],
+    });
+    expect(result.nodes[0]!.usd).toBeCloseTo(preset.estUsd, 6);
+  });
+
+  it('an unknown model id (not in the pushed catalog nor the static preset) is still "unknown"', () => {
+    setLiveCatalogForCostEstimate(makeCatalog());
+    const result = estimateWorkflowCost({
+      version: 1,
+      id: 'wf-x',
+      name: 'x',
+      nodes: [{ id: 'img', type: 'fal.image', params: { modelId: 'totally/unknown-model' } }],
+      edges: [],
+    });
+    expect(result.nodes[0]!.usd).toBeNull();
+    expect(result.nodes[0]!.note).toBeTruthy();
+  });
+
+  it('llm live-only id resolves via the pushed catalog', () => {
+    setLiveCatalogForCostEstimate(
+      makeCatalog({
+        openrouter: [
+          {
+            id: 'brand/new-llm',
+            label: 'Brand New LLM',
+            tier: 'kha',
+            estUsd: 0.001,
+            estBasis: 'per call (~800 in / 500 out tokens)',
+            createdAt: null,
+            featured: false,
+          },
+        ],
+      }),
+    );
+    const result = estimateWorkflowCost({
+      version: 1,
+      id: 'wf-x',
+      name: 'x',
+      nodes: [{ id: 'gen', type: 'llm.generate', params: { model: 'brand/new-llm' } }],
+      edges: [],
+    });
+    expect(result.nodes[0]!.usd).toBeCloseTo(0.001, 6);
   });
 });

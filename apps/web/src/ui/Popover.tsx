@@ -23,8 +23,19 @@
  * React's synthetic event system still bubbles portal content up through
  * the *React* tree (not the DOM tree), so an ancestor's `onClick`
  * (`stopPropagation`, etc.) keeps working exactly as before.
+ *
+ * Fix (post-review, SPEC-step19.md): `align` alone isn't enough to guarantee
+ * on-screen placement — e.g. ModelPicker's `w-80` (320px) panel anchored
+ * with the default `align: 'left'` off a trigger living in a narrow
+ * right-docked params panel always ran past the viewport's right edge
+ * (confirmed live: its right-aligned price column got clipped). A second
+ * `useLayoutEffect`, gated on `rect` so it only runs once the panel has
+ * actually mounted, measures the rendered panel's own width and clamps its
+ * final `left` into `[VIEWPORT_MARGIN, window.innerWidth - VIEWPORT_MARGIN -
+ * width]` — applied uniformly regardless of `align`, so both alignment
+ * modes stay fully on-screen even in a narrow window.
  */
-import { useLayoutEffect, useState, type ReactNode, type RefObject } from 'react';
+import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface PopoverProps {
@@ -42,8 +53,13 @@ interface AnchorRect {
   right: number;
 }
 
+/** Minimum gap kept between the popover panel and either viewport edge. */
+const VIEWPORT_MARGIN = 8;
+
 export function Popover({ children, className = '', anchorRef, align = 'left' }: PopoverProps) {
   const [rect, setRect] = useState<AnchorRect | null>(null);
+  const [left, setLeft] = useState<number | null>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
 
   // Re-measure synchronously before paint (avoids a visible jump from 0,0)
   // and again on resize/scroll anywhere in the document — the anchor can sit
@@ -64,13 +80,35 @@ export function Popover({ children, className = '', anchorRef, align = 'left' }:
     };
   }, [anchorRef]);
 
+  // Clamp horizontally into the viewport (see file header). Depends on
+  // `rect` (only non-null once the panel below is actually mounted, so
+  // `panelRef.current` is available to measure) and re-runs on every
+  // resize/scroll re-measure too, since the available room can change.
+  useLayoutEffect(() => {
+    if (!rect) return;
+    const panel = panelRef.current;
+    const width = panel?.getBoundingClientRect().width ?? 0;
+    const naiveLeft = align === 'right' ? window.innerWidth - rect.right - width : rect.left;
+    const maxLeft = Math.max(VIEWPORT_MARGIN, window.innerWidth - VIEWPORT_MARGIN - width);
+    setLeft(Math.min(Math.max(naiveLeft, VIEWPORT_MARGIN), maxLeft));
+  }, [rect, align]);
+
   if (!rect) return null;
 
+  // `left === null` only for the single render right after the panel first
+  // mounts (before the clamp effect above has had a chance to measure it) —
+  // fall back to the original unclamped placement for that one frame, which
+  // React flushes together with the clamp effect's own re-render before the
+  // browser ever paints, so this fallback is never actually visible.
+  const style: CSSProperties =
+    left === null
+      ? align === 'right'
+        ? { top: rect.top, right: rect.right }
+        : { top: rect.top, left: rect.left }
+      : { top: rect.top, left };
+
   return createPortal(
-    <div
-      className={`fixed z-20 mt-1.5 border-2 border-ink bg-paper shadow-hard-5 ${className}`}
-      style={align === 'right' ? { top: rect.top, right: rect.right } : { top: rect.top, left: rect.left }}
-    >
+    <div ref={panelRef} className={`fixed z-20 mt-1.5 border-2 border-ink bg-paper shadow-hard-5 ${className}`} style={style}>
       {children}
     </div>,
     document.body,
