@@ -59,6 +59,7 @@ export function mergeFalCatalog(liveEntries: LiveFalModel[], presets: FalModelPr
     note: preset.note,
     createdAt: liveById.get(preset.id)?.createdAt ?? null,
     featured: true,
+    imageKind: preset.imageKind,
   }));
 
   for (const live of liveEntries) {
@@ -74,6 +75,7 @@ export function mergeFalCatalog(liveEntries: LiveFalModel[], presets: FalModelPr
       note: live.note,
       createdAt: live.createdAt,
       featured: false,
+      imageKind: live.imageKind,
     });
   }
 

@@ -162,6 +162,8 @@ describe('fetchFalCatalog', () => {
         createdAt: Date.parse('2024-08-01T00:00:00.000Z'),
         note: 'A'.repeat(120),
         priceRaw: '**$0.025** per megapixel',
+        // SPEC-step29.md §2 — category "text-to-image" -> imageKind 't2i'.
+        imageKind: 't2i',
       },
     ]);
   });
@@ -200,6 +202,13 @@ describe('fetchFalCatalog', () => {
     expect(result.find((m) => m.id === 'fal-ai/veo3')?.kind).toBe('video-t2v');
     expect(result.find((m) => m.id === 'fal-ai/img2img-tool')?.kind).toBe('image');
     expect(result.find((m) => m.id === 'fal-ai/kling/i2v')?.kind).toBe('video-i2v');
+
+    // SPEC-step29.md §2 — category "image-to-image" -> imageKind 'i2i';
+    // video categories never get an imageKind (that split already lives in
+    // `kind` itself for video-t2v/video-i2v).
+    expect(result.find((m) => m.id === 'fal-ai/img2img-tool')?.imageKind).toBe('i2i');
+    expect(result.find((m) => m.id === 'fal-ai/veo3')?.imageKind).toBeUndefined();
+    expect(result.find((m) => m.id === 'fal-ai/kling/i2v')?.imageKind).toBeUndefined();
   });
 
   it('never runs more than `concurrency` page requests at once', async () => {

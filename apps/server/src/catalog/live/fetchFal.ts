@@ -44,12 +44,26 @@ const CATEGORY_TO_KIND: Record<string, FalKind> = {
   'image-to-video': 'video-i2v',
 };
 
+/**
+ * SPEC-step29.md §2 — sub-classification of the two `kind: 'image'`
+ * categories (confirmed live 2026-07-13 via `GET /api/models`: fal.ai's only
+ * two image categories are exactly `text-to-image` and `image-to-image`, no
+ * separate "image-editing" category exists). Not consulted for video
+ * categories — `video-t2v`/`video-i2v` already carries that split via `kind`
+ * itself.
+ */
+const CATEGORY_TO_IMAGE_KIND: Record<string, 't2i' | 'i2i'> = {
+  'text-to-image': 't2i',
+  'image-to-image': 'i2i',
+};
+
 function toLiveFalModel(m: RawFalModel): LiveFalModel | undefined {
   const kind = m.category ? CATEGORY_TO_KIND[m.category] : undefined;
   if (!kind) return undefined;
 
   const createdRaw = m.date ?? m.publishedAt;
   const createdAt = createdRaw ? Date.parse(createdRaw) : NaN;
+  const imageKind = m.category ? CATEGORY_TO_IMAGE_KIND[m.category] : undefined;
 
   return {
     id: m.id,
@@ -58,6 +72,7 @@ function toLiveFalModel(m: RawFalModel): LiveFalModel | undefined {
     createdAt: Number.isFinite(createdAt) ? createdAt : null,
     note: m.shortDescription ? m.shortDescription.slice(0, NOTE_MAX_LEN) : undefined,
     priceRaw: m.pricingInfoOverride,
+    ...(imageKind ? { imageKind } : {}),
   };
 }
 

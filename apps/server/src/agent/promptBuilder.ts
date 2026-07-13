@@ -17,9 +17,15 @@ const TIER_LABEL: Record<FalModelPreset['tier'], string> = {
   re: '💸 rẻ',
 };
 
+/** SPEC-step29.md §4 — `imageKind` only exists on `FalModelPreset` (and only for `kind: 'image'` entries), never on `OpenRouterModelPreset`; this type guard lets `formatModelLine` below tag it without breaking the shared union param. */
+function hasImageKind(model: FalModelPreset | OpenRouterModelPreset): model is FalModelPreset & { imageKind: 't2i' | 'i2i' } {
+  return 'imageKind' in model && model.imageKind !== undefined;
+}
+
 function formatModelLine(model: FalModelPreset | OpenRouterModelPreset): string {
   const note = model.note ? ` — ${model.note}` : '';
-  return `- [${TIER_LABEL[model.tier]}] ${model.id} (${model.label}), giá: ${model.cost}${note}`;
+  const tag = hasImageKind(model) ? ` [${model.imageKind}]` : '';
+  return `- [${TIER_LABEL[model.tier]}]${tag} ${model.id} (${model.label}), giá: ${model.cost}${note}`;
 }
 
 /**
@@ -126,7 +132,8 @@ function formatCatalogPrice(estUsd: number | null, estBasis: string): string {
 function formatCatalogFalLine(model: CatalogFalEntry): string {
   const note = model.note ? ` — ${model.note}` : '';
   const badge = model.featured ? ' ⭐' : '';
-  return `- [${CATALOG_TIER_LABEL[model.tier]}]${badge} ${model.id} (${model.label}), giá: ${formatCatalogPrice(model.estUsd, model.estBasis)}${note}`;
+  const tag = model.imageKind ? ` [${model.imageKind}]` : '';
+  return `- [${CATALOG_TIER_LABEL[model.tier]}]${badge}${tag} ${model.id} (${model.label}), giá: ${formatCatalogPrice(model.estUsd, model.estBasis)}${note}`;
 }
 
 function formatCatalogLlmLine(model: CatalogLlmEntry): string {
@@ -211,6 +218,24 @@ function buildOpenRouterCatalogSection(capped: CappedLiveCatalogForPrompt | unde
  * does not change either builder's output by even one byte (verified by
  * `agent-prompt.test.ts`, which is not touched by this step).
  */
+/**
+ * SPEC-step29.md §4 — the bug this rule prevents: a real 2026-07-13 user
+ * session where the agent picked `fal-ai/flux/dev` ([t2i]) for 4 `fal.image`
+ * nodes that each had an image edge connected, silently discarding the input
+ * image and burning credit on 4 pointless text-to-image runs.
+ * `nodes/fal.image.ts`/`nodes/fal.video.ts` runtime-guard the same rule as a
+ * last resort, but catching it here (before generation) avoids the wasted
+ * run entirely.
+ */
+const INPUT_DATA_MODEL_SELECTION_RULE = `
+QUY TẮC CHỌN MODEL THEO DỮ LIỆU VÀO (quan trọng — tránh chạy tốn phí vô ích):
+- Nếu node "fal.image" có edge nối vào port "image" (có ảnh tham chiếu) → BẮT BUỘC chọn modelId đánh dấu [i2i] (image-to-image) trong catalog trên. Model đánh dấu [t2i] (text-to-image) sẽ ÂM THẦM BỎ QUA ảnh đầu vào — vẫn chạy và vẫn tốn phí, nhưng ảnh gốc bị vứt bỏ.
+- Tương tự, nếu node "fal.video" có edge nối vào port "image" → chọn model kind "video-i2v" (image-to-video); model "video-t2v" cũng sẽ bỏ qua ảnh đầu vào.
+- Nếu port "image" của node đó KHÔNG có edge nối vào, dùng model [t2i] / "video-t2v" như bình thường.
+Ví dụ (sai → đúng): node "fal.image" có ảnh nối vào port "image" nhưng modelId = "fal-ai/flux/dev" ([t2i]) → SAI (âm thầm bỏ qua ảnh, tốn phí vô ích).
+Phải đổi sang modelId đánh dấu [i2i] (vd model image-to-image trong catalog trên) → ĐÚNG.
+`.trim();
+
 function buildNodeCatalogSection(registry: NodeRegistry): string {
   const catalog = JSON.stringify(registry.describeForAgent(), null, 2);
   const capped = liveCatalogSnapshot ? capLiveCatalogForPrompt(liveCatalogSnapshot) : undefined;
@@ -221,6 +246,8 @@ function buildNodeCatalogSection(registry: NodeRegistry): string {
     buildFalCatalogSection(capped),
     '',
     buildOpenRouterCatalogSection(capped),
+    '',
+    INPUT_DATA_MODEL_SELECTION_RULE,
   ].join('\n');
 }
 

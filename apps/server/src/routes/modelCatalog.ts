@@ -11,20 +11,22 @@
  * `video`/`image`/`llm` shape left to keep serving alongside it.
  *
  * `publishCatalog` is this route's other job: every time it fetches/
- * refreshes the unified catalog, it pushes the result into the 3 other
- * SPEC-step19.md §1.6 consumers this step owns (`engine/costEstimate.ts`,
- * `nodes/fal.video.ts`, `agent/promptBuilder.ts`) via their own module-level
- * setters — see each file's own doc comment for why a push-based snapshot
- * (rather than threading `db`/async through their call sites) was the
- * chosen shape: it keeps every one of those 3 modules' existing sync
- * signatures and default (static-only) behavior 100% unchanged for any
- * caller that never touches this route.
+ * refreshes the unified catalog, it pushes the result into the other
+ * SPEC-step19.md §1.6 / SPEC-step29.md §3 consumers this step owns
+ * (`engine/costEstimate.ts`, `nodes/fal.video.ts`, `nodes/fal.image.ts`,
+ * `agent/promptBuilder.ts`) via their own module-level setters — see each
+ * file's own doc comment for why a push-based snapshot (rather than
+ * threading `db`/async through their call sites) was the chosen shape: it
+ * keeps every one of those modules' existing sync signatures and default
+ * (static-only) behavior 100% unchanged for any caller that never touches
+ * this route.
  */
 import type Database from 'better-sqlite3';
 import type { FastifyInstance } from 'fastify';
 import { setPromptBuilderCatalog } from '../agent/promptBuilder.js';
 import { getCatalog, refreshCatalog, type UnifiedCatalog } from '../catalog/live/index.js';
 import { setLiveCatalogForCostEstimate } from '../engine/costEstimate.js';
+import { setLiveImageCatalog } from '../nodes/fal.image.js';
 import { setFalVideoLiveCatalog } from '../nodes/fal.video.js';
 
 export interface ModelCatalogRouteDeps {
@@ -34,6 +36,7 @@ export interface ModelCatalogRouteDeps {
 function publishCatalog(catalog: UnifiedCatalog): void {
   setLiveCatalogForCostEstimate(catalog);
   setFalVideoLiveCatalog(catalog.falVideo);
+  setLiveImageCatalog(catalog.falImage);
   setPromptBuilderCatalog(catalog);
 }
 

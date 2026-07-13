@@ -248,6 +248,8 @@ export interface CatalogFalEntry {
   createdAt: number | null;
   /** true = cũng có trong preset tĩnh tay-curated (label/note/estUsd đáng tin hơn). */
   featured: boolean;
+  /** SPEC-step29.md §2 — t2i/i2i sub-classification, only meaningful for `kind: 'image'`; undefined when unknown. No UI picker badge yet (backlog). */
+  imageKind?: 't2i' | 'i2i';
 }
 
 export interface CatalogLlmEntry {

@@ -46,6 +46,8 @@ export interface LiveFalModel {
   note?: string;
   /** Raw `pricingInfoOverride` markdown string, possibly empty — parsed by `priceParser.ts`. */
   priceRaw?: string;
+  /** SPEC-step29.md §2 — only set when `kind === 'image'`, from fal.ai's own `category` field (`text-to-image` -> 't2i', `image-to-image` -> 'i2i'); undefined for video categories/anything unmapped. */
+  imageKind?: 't2i' | 'i2i';
 }
 
 /** One entry in the unified fal (image/video) catalog served to consumers. */
@@ -61,6 +63,8 @@ export interface CatalogFalEntry {
   createdAt: number | null;
   /** true = also present in the hand-curated static preset (`../falModels.ts`). */
   featured: boolean;
+  /** SPEC-step29.md §2 — additive t2i/i2i sub-classification for `kind: 'image'` entries (from the static preset or the live category mapping); undefined when unknown. */
+  imageKind?: 't2i' | 'i2i';
 }
 
 /** One entry in the unified OpenRouter (llm) catalog served to consumers. */

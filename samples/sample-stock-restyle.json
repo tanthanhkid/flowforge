@@ -19,7 +19,7 @@
       "id": "image",
       "type": "fal.image",
       "params": {
-        "modelId": "fal-ai/flux/dev"
+        "modelId": "fal-ai/flux-pro/kontext"
       },
       "position": { "x": 300, "y": 0 }
     },

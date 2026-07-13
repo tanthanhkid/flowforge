@@ -96,6 +96,26 @@ describe('mergeFalCatalog', () => {
     const [entry] = mergeFalCatalog(live, []);
     expect(entry).toMatchObject({ estUsd: null, tier: 'unknown', featured: false });
   });
+
+  // SPEC-step29.md §2 — `imageKind` (additive t2i/i2i sub-classification)
+  // must survive the merge for both the preset and live-only paths.
+  it('carries a preset\'s imageKind through to the merged entry', () => {
+    const [entry] = mergeFalCatalog([], [{ ...FAL_PRESET, imageKind: 't2i' }]);
+    expect(entry?.imageKind).toBe('t2i');
+  });
+
+  it('carries a live-only entry\'s imageKind through to the merged entry', () => {
+    const live: LiveFalModel[] = [
+      { id: 'fal-ai/brand-new-i2i', label: 'Brand New I2I', kind: 'image', createdAt: null, priceRaw: '**$0.03** per image', imageKind: 'i2i' },
+    ];
+    const [entry] = mergeFalCatalog(live, []);
+    expect(entry?.imageKind).toBe('i2i');
+  });
+
+  it('leaves imageKind undefined when neither the preset nor the live entry sets it', () => {
+    const [entry] = mergeFalCatalog([], [FAL_PRESET]);
+    expect(entry?.imageKind).toBeUndefined();
+  });
 });
 
 describe('mergeLlmCatalog', () => {

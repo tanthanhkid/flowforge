@@ -14,8 +14,9 @@ import type { Workflow } from '../src/engine/schema.js';
 import { InMemoryRunStore } from '../src/engine/stores.js';
 import type { ExecutionContext, MediaValue } from '../src/engine/types.js';
 import { mediaToImageUrl, runFalQueue } from '../src/nodes/providers/fal.js';
+import { inputImageNode } from '../src/nodes/input.image.js';
 import { inputTextNode } from '../src/nodes/input.text.js';
-import { falImageNode } from '../src/nodes/fal.image.js';
+import { falImageNode, setLiveImageCatalog } from '../src/nodes/fal.image.js';
 import { falVideoNode, setFalVideoLiveCatalog } from '../src/nodes/fal.video.js';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -238,7 +239,11 @@ describe('fal.image node — end to end through the Engine (mocked fetch)', () =
   });
 
   it('maps imageSize/seed/image_url/extra into the submit body and populates MediaValue.meta from the response', async () => {
-    const modelId = 'fal-ai/flux/dev';
+    // Not "fal-ai/flux/dev" on purpose (SPEC-step29.md §3): that preset is
+    // now marked t2i, and the new t2i+image guard would throw before this
+    // test ever reaches the param-mapping assertions below. A custom/
+    // uncatalogued id keeps `imageKind` unknown, same as before this step.
+    const modelId = 'fal-ai/custom-mapping-model';
     const resultImageUrl = 'https://cdn.fal.ai/files/mapping-result.jpg';
     const imageBytes = new Uint8Array([9, 8, 7]);
     let capturedSubmitBody: unknown;
@@ -598,5 +603,318 @@ describe('fal.video node — t2v + image guard against the live catalog (SPEC-st
       ctx,
     });
     expect((outputs.video as MediaValue).kind).toBe('video');
+  });
+});
+
+// SPEC-step29.md §3 — guard against silently-billed text-to-image runs that
+// ignore a connected reference image (real 2026-07-13 session: the agent
+// picked t2i "fal-ai/flux/dev" for 4 fal.image nodes that each had an image
+// edge wired in — each run "succeeded" but threw the input image away).
+describe('fal.image node — t2i + image guard (SPEC-step29.md §3)', () => {
+  afterEach(() => {
+    // Reset so this describe block never leaks its pushed catalog into
+    // another test in this file.
+    setLiveImageCatalog(undefined);
+  });
+
+  it('throws BEFORE calling fetch when the catalog modelId is a t2i preset and an image is connected', async () => {
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+
+    await expect(
+      falImageNode.execute({
+        inputs: { prompt: 'xoá vật thể trong ảnh', image },
+        params: { modelId: 'fal-ai/flux/dev' },
+        ctx,
+      }),
+    ).rejects.toThrow(/là text-to-image nên sẽ bỏ qua ảnh đầu vào/);
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  // None of the 12 static image presets are i2i today (falModels.ts §2 —
+  // every FLUX/Recraft/Imagen4/... preset here is a base text-to-image
+  // endpoint), so the "up to 2 i2i suggestions" guard rule can only be
+  // exercised against the live-merged catalog snapshot in this test suite —
+  // exactly the fallback path SPEC-step29.md §3 describes.
+  it('includes up to 2 i2i suggestions from the live catalog (capped, in order) when no static preset is i2i', async () => {
+    setLiveImageCatalog([
+      { id: 'fal-ai/flux-pro/kontext', label: 'FLUX Kontext', kind: 'image', tier: 'xin', estUsd: 0.04, estBasis: 'x', createdAt: null, featured: false, imageKind: 'i2i' },
+      { id: 'fal-ai/qwen-image-edit', label: 'Qwen Image Edit', kind: 'image', tier: 'kha', estUsd: 0.03, estBasis: 'x', createdAt: null, featured: false, imageKind: 'i2i' },
+      { id: 'fal-ai/some-third-i2i-model', label: 'Third', kind: 'image', tier: 're', estUsd: 0.01, estBasis: 'x', createdAt: null, featured: false, imageKind: 'i2i' },
+    ]);
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const error = await falImageNode
+      .execute({ inputs: { prompt: 'a cat', image }, params: { modelId: 'fal-ai/flux/dev' }, ctx })
+      .catch((e: unknown) => e as Error);
+
+    expect(error.message).toContain('fal-ai/flux-pro/kontext');
+    expect(error.message).toContain('fal-ai/qwen-image-edit');
+    expect(error.message).not.toContain('fal-ai/some-third-i2i-model'); // capped at 2
+  });
+
+  it('omits the suggestion clause entirely when neither the static preset nor the live catalog has an i2i model', async () => {
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const error = await falImageNode
+      .execute({ inputs: { prompt: 'a cat', image }, params: { modelId: 'fal-ai/flux/dev' }, ctx })
+      .catch((e: unknown) => e as Error);
+
+    expect(error.message).toBe(
+      'Model "fal-ai/flux/dev" là text-to-image nên sẽ bỏ qua ảnh đầu vào. Chọn model image-to-image hoặc ngắt kết nối ảnh.',
+    );
+  });
+
+  it('does not throw and submits image_url for an i2i model (live-tagged) + image', async () => {
+    const modelId = 'fal-ai/flux-pro/kontext';
+    setLiveImageCatalog([
+      { id: modelId, label: 'FLUX Kontext', kind: 'image', tier: 'xin', estUsd: 0.04, estBasis: 'x', createdAt: null, featured: false, imageKind: 'i2i' },
+    ]);
+    const resultImageUrl = 'https://cdn.fal.ai/files/i2i-result.png';
+    const imageBytes = new Uint8Array([1, 2, 3]);
+    let capturedSubmitBody: unknown;
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        capturedSubmitBody = JSON.parse(init?.body as string);
+        return jsonResponse(200, {
+          request_id: 'i2i-req',
+          status_url: 'https://queue.fal.run/i2i/status',
+          response_url: 'https://queue.fal.run/i2i/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/i2i/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/i2i/response') {
+        return jsonResponse(200, { images: [{ url: resultImageUrl }] });
+      }
+      if (url === resultImageUrl) {
+        return binaryResponse(200, imageBytes, 'image/png');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const outputs = await falImageNode.execute({
+      inputs: { prompt: 'xoá vật thể trong ảnh', image },
+      params: { modelId },
+      ctx,
+    });
+
+    expect((capturedSubmitBody as Record<string, unknown>).image_url).toBe('https://example.test/ref.png');
+    expect((outputs.image as MediaValue).kind).toBe('image');
+  });
+
+  it('does not throw for a custom (non-catalog) modelId + image — unchanged behavior', async () => {
+    const modelId = 'fal-ai/some-custom-image-model';
+    const resultImageUrl = 'https://cdn.fal.ai/files/custom-result.png';
+    const imageBytes = new Uint8Array([4, 5, 6]);
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        return jsonResponse(200, {
+          request_id: 'custom-req',
+          status_url: 'https://queue.fal.run/custom-img/status',
+          response_url: 'https://queue.fal.run/custom-img/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/custom-img/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/custom-img/response') {
+        return jsonResponse(200, { images: [{ url: resultImageUrl }] });
+      }
+      if (url === resultImageUrl) {
+        return binaryResponse(200, imageBytes, 'image/png');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const outputs = await falImageNode.execute({
+      inputs: { prompt: 'a cat', image },
+      params: { modelId },
+      ctx,
+    });
+
+    expect((outputs.image as MediaValue).kind).toBe('image');
+  });
+
+  it('does not throw for a t2i model when no image is connected', async () => {
+    const modelId = 'fal-ai/flux/dev';
+    const resultImageUrl = 'https://cdn.fal.ai/files/no-image-result.png';
+    const imageBytes = new Uint8Array([7, 8, 9]);
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        return jsonResponse(200, {
+          request_id: 'no-image-req',
+          status_url: 'https://queue.fal.run/no-image/status',
+          response_url: 'https://queue.fal.run/no-image/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/no-image/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/no-image/response') {
+        return jsonResponse(200, { images: [{ url: resultImageUrl }] });
+      }
+      if (url === resultImageUrl) {
+        return binaryResponse(200, imageBytes, 'image/png');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const outputs = await falImageNode.execute({
+      inputs: { prompt: 'a cat' },
+      params: { modelId },
+      ctx,
+    });
+
+    expect((outputs.image as MediaValue).kind).toBe('image');
+  });
+});
+
+// SPEC-step19.md §1.6 style — the t2i/i2i guard also consults the
+// live-merged catalog (pushed in by routes/modelCatalog.ts via
+// setLiveImageCatalog) once it's been populated, so it also blocks a
+// live-only t2i id that isn't in the hand-curated static preset list.
+describe('fal.image node — t2i + image guard against the live catalog (SPEC-step29.md §3)', () => {
+  afterEach(() => {
+    setLiveImageCatalog(undefined);
+  });
+
+  it('throws for a live-only (non-preset) t2i modelId + image, once a live catalog has been pushed', async () => {
+    setLiveImageCatalog([
+      { id: 'fal-ai/brand-new/t2i-model', label: 'Brand New T2I', kind: 'image', tier: 're', estUsd: 0.02, estBasis: 'x', createdAt: null, featured: false, imageKind: 't2i' },
+    ]);
+    const fetchMock = vi.fn();
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+
+    await expect(
+      falImageNode.execute({
+        inputs: { prompt: 'a cat', image },
+        params: { modelId: 'fal-ai/brand-new/t2i-model' },
+        ctx,
+      }),
+    ).rejects.toThrow(/là text-to-image nên sẽ bỏ qua ảnh đầu vào/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('still does not throw for a modelId unknown to both the static preset AND the pushed live catalog', async () => {
+    setLiveImageCatalog([
+      { id: 'fal-ai/brand-new/t2i-model', label: 'Brand New T2I', kind: 'image', tier: 're', estUsd: 0.02, estBasis: 'x', createdAt: null, featured: false, imageKind: 't2i' },
+    ]);
+    const modelId = 'fal-ai/some-other-custom-image-model';
+    const resultImageUrl = 'https://cdn.fal.ai/files/still-custom-result.png';
+    const imageBytes = new Uint8Array([1, 1, 1]);
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === `https://queue.fal.run/${modelId}` && method === 'POST') {
+        return jsonResponse(200, {
+          request_id: 'still-custom-req',
+          status_url: 'https://queue.fal.run/still-custom-img/status',
+          response_url: 'https://queue.fal.run/still-custom-img/response',
+        });
+      }
+      if (url === 'https://queue.fal.run/still-custom-img/status?logs=0') {
+        return jsonResponse(200, { status: 'COMPLETED' });
+      }
+      if (url === 'https://queue.fal.run/still-custom-img/response') {
+        return jsonResponse(200, { images: [{ url: resultImageUrl }] });
+      }
+      if (url === resultImageUrl) {
+        return binaryResponse(200, imageBytes, 'image/png');
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const image: MediaValue = { kind: 'image', url: 'https://example.test/ref.png' };
+    const outputs = await falImageNode.execute({
+      inputs: { prompt: 'a cat', image },
+      params: { modelId },
+      ctx,
+    });
+    expect((outputs.image as MediaValue).kind).toBe('image');
+  });
+});
+
+// SPEC-step29.md §5.4 — regression test for the exact real session bug: a
+// workflow with 1 input.image feeding 4 separate fal.image nodes, all left
+// on the default/AI-picked "fal-ai/flux/dev" (a t2i preset). Before this
+// step every one of those 4 nodes would "succeed" while silently discarding
+// the input image; now every one of them must fail fast, before ever
+// spending fal.ai credit (fetch never called).
+describe('fal.image guard — regression: real 2026-07-13 user session (SPEC-step29.md §5.4)', () => {
+  it('input.image -> 4x fal.image (flux/dev): all 4 nodes fail with the guard message, fetch never called', async () => {
+    const tmp = mkdtempSync(path.join(os.tmpdir(), 'ff-regression-t2i-'));
+    try {
+      writeFileSync(path.join(tmp, 'user-photo.png'), Buffer.from([137, 80, 78, 71]));
+
+      const fetchMock = vi.fn();
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      const registry = new NodeRegistry();
+      registry.register(inputImageNode);
+      registry.register(inputTextNode);
+      registry.register(falImageNode);
+      const engine = new Engine(
+        registry,
+        { runs: new InMemoryRunStore(), cache: new InMemoryCacheStore() },
+        { artifactsDir: tmp },
+      );
+
+      const editNodeIds = ['edit1', 'edit2', 'edit3', 'edit4'];
+      const wf: Workflow = {
+        version: 1,
+        id: 'regression-real-session-bug',
+        name: '',
+        nodes: [
+          { id: 'photo', type: 'input.image', params: { path: 'user-photo.png' } },
+          { id: 'topic', type: 'input.text', params: { value: 'xoá vật thể trong ảnh' } },
+          ...editNodeIds.map((id) => ({ id, type: 'fal.image', params: { modelId: 'fal-ai/flux/dev' } })),
+        ],
+        edges: editNodeIds.flatMap((id, i) => [
+          { id: `img-e${i}`, from: { node: 'photo', port: 'image' }, to: { node: id, port: 'image' } },
+          { id: `txt-e${i}`, from: { node: 'topic', port: 'text' }, to: { node: id, port: 'prompt' } },
+        ]),
+      };
+
+      const result = await engine.run(wf);
+
+      expect(result.status).toBe('error');
+      for (const id of editNodeIds) {
+        expect(result.nodes[id]?.state).toBe('error');
+        expect(result.nodes[id]?.error).toMatch(/là text-to-image nên sẽ bỏ qua ảnh đầu vào/);
+      }
+      expect(fetchMock).not.toHaveBeenCalled();
+    } finally {
+      rmSync(tmp, { recursive: true, force: true });
+    }
   });
 });

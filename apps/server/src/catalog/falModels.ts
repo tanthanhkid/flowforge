@@ -37,6 +37,18 @@ export interface FalModelPreset {
   estUsd: number;
   /** How `estUsd` was derived, e.g. "per 5s clip (quy đổi từ $3.2/8s)". */
   estBasis: string;
+  /**
+   * SPEC-step29.md §2 — sub-classification of `kind: 'image'` presets only
+   * (additive, `kind` itself is untouched to avoid disturbing the existing
+   * tier bucket/merge/picker logic): 't2i' = text-to-image (ignores an
+   * `image` input), 'i2i' = image-to-image (uses it). Hand-annotated below
+   * from each model's known family, cross-checked against fal.ai's own live
+   * `category` field (verified live 2026-07-13: `text-to-image` -> t2i,
+   * `image-to-image` -> i2i — see `catalog/live/fetchFal.ts`). Left
+   * `undefined` when unsure (`fal.image`'s guard then simply doesn't know —
+   * same as any custom/uncatalogued model id).
+   */
+  imageKind?: 't2i' | 'i2i';
 }
 
 export const FAL_VIDEO_MODELS: FalModelPreset[] = [
@@ -297,6 +309,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.05/ảnh',
     note: 'Độ chi tiết cao nhất dòng FLUX, ảnh chân thực, giá cao nhất nhóm image',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.05,
     estBasis: 'per image',
   },
@@ -307,6 +320,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.04-0.08/ảnh',
     note: 'Giỏi chữ trong ảnh, tốt cho poster/logo/thiết kế có text',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.06,
     estBasis: 'per image (trung bình khoảng $0.04-0.08)',
   },
@@ -317,6 +331,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '$0.04-0.06/ảnh theo bản (fast/standard/ultra)',
     note: 'Model của Google, ảnh chân thực và chi tiết cao, đặc biệt tốt cho ảnh người',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.05,
     estBasis: 'per image (trung bình khoảng $0.04-0.06)',
   },
@@ -327,6 +342,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.03-0.05/ảnh (ước lượng)',
     note: 'Model của ByteDance, bản mới nhất dòng Seedream, chi tiết cao và màu sắc đẹp',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.04,
     estBasis: 'per image (trung bình khoảng $0.03-0.05)',
   },
@@ -337,6 +353,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '$0.03/ảnh (Turbo) — $0.06 (Balanced) — $0.09 (Quality)',
     note: 'Giỏi chữ trong ảnh nhất hiện có (cùng nhóm với Recraft), nhiều mức chất lượng/giá',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.06,
     estBasis: 'per image (mức Balanced, giữa Turbo $0.03 và Quality $0.09)',
   },
@@ -349,6 +366,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.025/megapixel',
     note: 'Chất lượng tốt, giá vừa phải, lựa chọn mặc định hợp lý',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.025,
     estBasis: 'per image (ảnh ~1 megapixel x $0.025/MP)',
   },
@@ -359,6 +377,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.03-0.06/ảnh (ước lượng)',
     note: 'Model mã nguồn mở của Stability AI, chất lượng khá, linh hoạt fine-tune',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.045,
     estBasis: 'per image (trung bình khoảng $0.03-0.06)',
   },
@@ -369,6 +388,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.02-0.04/ảnh (ước lượng)',
     note: 'Model mã nguồn mở của Alibaba, chất lượng khá, giỏi chữ tiếng Trung/Anh',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.03,
     estBasis: 'per image (trung bình khoảng $0.02-0.04)',
   },
@@ -379,6 +399,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '$0.05/megapixel',
     note: 'Model mã nguồn mở, chi tiết tốt, cạnh tranh với FLUX dev',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.05,
     estBasis: 'per image (ảnh ~1 megapixel x $0.05/MP)',
   },
@@ -391,6 +412,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.003/megapixel — rẻ nhất',
     note: 'Test/nháp — sinh rất nhanh và rẻ nhưng chi tiết kém hơn bản dev/pro',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.003,
     estBasis: 'per image (ảnh ~1 megapixel x $0.003/MP)',
   },
@@ -401,6 +423,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.005-0.01/ảnh (ước lượng)',
     note: 'Rất nhanh và rẻ, chất lượng thấp hơn FLUX/SD nhưng đủ dùng để nháp',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.0075,
     estBasis: 'per image (trung bình khoảng $0.005-0.01)',
   },
@@ -411,6 +434,7 @@ export const FAL_IMAGE_MODELS: FalModelPreset[] = [
     cost: '~$0.01/ảnh (ước lượng)',
     note: 'SDXL bản tối ưu tốc độ, rẻ và nhanh, hợp cho test hàng loạt',
     kind: 'image',
+    imageKind: 't2i',
     estUsd: 0.01,
     estBasis: 'per image',
   },

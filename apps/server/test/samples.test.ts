@@ -11,6 +11,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getDocumentProxy, extractText } from 'unpdf';
 import { describe, expect, it } from 'vitest';
+import { FAL_IMAGE_MODELS, FAL_VIDEO_MODELS } from '../src/catalog/falModels.js';
 import { findRepoRoot } from '../src/config.js';
 import { validateWorkflow } from '../src/engine/schema.js';
 import { createDefaultRegistry } from '../src/nodes/index.js';
@@ -46,6 +47,54 @@ describe('samples/*.json', () => {
       'sample-tips-listicle.json',
       'sample-value-video.json',
     ]);
+  });
+
+  // SPEC-step29.md §7 regression: the §3 fal.image guard (mirroring the
+  // pre-existing fal.video t2v/i2v guard) throws at *run* time, not schema
+  // validation time, when a node has an image wired into its `image` port
+  // but uses a modelId statically known (FAL_IMAGE_MODELS/FAL_VIDEO_MODELS)
+  // to be text-to-image/text-to-video. `sample-stock-restyle.json` hit
+  // exactly this after `fal-ai/flux/dev` got annotated `imageKind: 't2i'` —
+  // this check re-scans every sample so neither a future sample nor a
+  // future preset re-annotation can silently reintroduce it. Pure static
+  // lookup against the preset tables, no network/registry involved.
+  it('no fal.image/fal.video node with an incoming "image" edge uses a static t2i/text-to-video preset', () => {
+    const t2iPresetIds = new Set(
+      FAL_IMAGE_MODELS.filter((m) => m.imageKind === 't2i').map((m) => m.id),
+    );
+    const t2vPresetIds = new Set(
+      FAL_VIDEO_MODELS.filter((m) => m.kind === 'video-t2v').map((m) => m.id),
+    );
+
+    for (const file of files) {
+      const raw = JSON.parse(readFileSync(path.join(samplesDir, file), 'utf8')) as {
+        nodes: { id: string; type: string; params?: Record<string, unknown> }[];
+        edges: { to: { node: string; port: string } }[];
+      };
+      const nodesById = new Map(raw.nodes.map((n) => [n.id, n]));
+
+      for (const edge of raw.edges) {
+        if (edge.to.port !== 'image') continue;
+        const target = nodesById.get(edge.to.node);
+        const modelId = target?.params?.modelId;
+        if (typeof modelId !== 'string') continue;
+
+        if (target?.type === 'fal.image' && t2iPresetIds.has(modelId)) {
+          throw new Error(
+            `${file}: node "${target.id}" (fal.image) has an image input wired into its "image" port but ` +
+              `uses static text-to-image preset "${modelId}" — fal.image's guard throws at run time. ` +
+              `Use an image-to-image model or disconnect the image input.`,
+          );
+        }
+        if (target?.type === 'fal.video' && t2vPresetIds.has(modelId)) {
+          throw new Error(
+            `${file}: node "${target.id}" (fal.video) has an image input wired into its "image" port but ` +
+              `uses static text-to-video preset "${modelId}" — fal.video's guard throws at run time. ` +
+              `Use an image-to-video model or disconnect the image input.`,
+          );
+        }
+      }
+    }
   });
 
   for (const file of files) {

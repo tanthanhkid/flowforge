@@ -98,6 +98,29 @@ describe('buildGenerateSystemPrompt', () => {
     expect(prompt).toContain(OPENROUTER_LLM_MODELS[0]!.id);
     expect(prompt).toMatch(/params\.model = ""/);
   });
+
+  // SPEC-step29.md §4 — the input-data-driven model selection rule (t2i/i2i)
+  // and the [i2i]/[t2i] tags next to image models in the static-preset
+  // fallback catalog rendering.
+  it('contains the QUY TẮC CHỌN MODEL THEO DỮ LIỆU VÀO rule block with a sai -> đúng example', () => {
+    expect(prompt).toContain('QUY TẮC CHỌN MODEL THEO DỮ LIỆU VÀO');
+    expect(prompt).toMatch(/\[i2i\]/);
+    expect(prompt).toMatch(/\[t2i\]/);
+    expect(prompt).toMatch(/SAI/);
+    expect(prompt).toMatch(/ĐÚNG/);
+  });
+
+  it('tags every static FAL_IMAGE_MODELS preset with its [imageKind] in the catalog list', () => {
+    for (const model of FAL_IMAGE_MODELS) {
+      if (!model.imageKind) continue;
+      // `model.id` alone also matches the paramsJsonSchema "default" line
+      // earlier in the prompt (e.g. `"default": "fal-ai/flux/dev"`) — the
+      // catalog list line specifically is `- [tier][ [tag]] id (label), ...`.
+      const line = prompt.split('\n').find((l) => l.includes(`${model.id} (`));
+      expect(line).toBeDefined();
+      expect(line).toContain(`[${model.imageKind}]`);
+    }
+  });
 });
 
 describe('buildEditSystemPrompt', () => {
@@ -137,6 +160,13 @@ describe('buildEditSystemPrompt', () => {
   it('also contains the MODEL CATALOG (OpenRouter LLM) section', () => {
     const prompt = buildEditSystemPrompt(registry, workflow, 'a');
     expect(prompt).toContain('MODEL CATALOG (OpenRouter LLM)');
+  });
+
+  // SPEC-step29.md §4 — buildNodeCatalogSection is shared, so edit-node
+  // inherits the input-data-driven model selection rule too.
+  it('also contains the QUY TẮC CHỌN MODEL THEO DỮ LIỆU VÀO rule block', () => {
+    const prompt = buildEditSystemPrompt(registry, workflow, 'a');
+    expect(prompt).toContain('QUY TẮC CHỌN MODEL THEO DỮ LIỆU VÀO');
   });
 });
 
@@ -275,6 +305,27 @@ describe('MODEL CATALOG sections — live catalog cap (SPEC-step19.md §1.6)', (
 
     expect(nonFeaturedMatches.length).toBeLessThanOrEqual(30);
     expect(nonFeaturedMatches.length).toBeGreaterThan(0);
+  });
+
+  // SPEC-step29.md §4 — the live-catalog-backed fal section also tags
+  // entries with a set `imageKind`, and leaves entries without one untagged
+  // (e.g. video entries, which never carry `imageKind`).
+  it('tags a live fal.image entry with imageKind set, and leaves one without it untagged', () => {
+    setPromptBuilderCatalog(
+      makeCatalog({
+        falImage: [
+          makeFalEntry({ id: 'fal-ai/live-i2i-model', kind: 'image', featured: true, tier: 'xin', imageKind: 'i2i' }),
+          makeFalEntry({ id: 'fal-ai/live-unknown-kind-model', kind: 'image', featured: true, tier: 'xin' }),
+        ],
+      }),
+    );
+
+    const prompt = buildGenerateSystemPrompt(registry);
+    const lines = prompt.split('\n');
+    const i2iLine = lines.find((l) => l.includes('fal-ai/live-i2i-model'));
+    const unknownLine = lines.find((l) => l.includes('fal-ai/live-unknown-kind-model'));
+    expect(i2iLine).toContain('[i2i]');
+    expect(unknownLine).not.toMatch(/\[i2i\]|\[t2i\]/);
   });
 
   it('buildEditSystemPrompt also uses the pushed live catalog (same cap logic)', () => {
