@@ -37,7 +37,7 @@
 - **ffmpeg local**: `video.compose` (ghép ≤3 video + audio, loop theo audio, mp4 1080×1920 mặc định — free, spawn ffmpeg)
 - **Utility**: `input.text`, `input.file`, `input.image`, `input.pdf` (unpdf), `input.markdown`, `text.template` (ghép text theo `{{slot}}`), `output.collect`
 
-Lưu ý chủ đích: model id của fal.ai/OpenRouter là string tự do (dropdown catalog chỉ là gợi ý — `apps/server/src/catalog/`, 48 preset phân hạng xin/kha/re kèm `estUsd` cho cost estimate; luôn giữ option "Tự nhập"). Node fal.video có guard: ảnh nối vào + model t2v trong catalog → chặn trước khi submit.
+Lưu ý chủ đích: model id của fal.ai/OpenRouter là string tự do (dropdown catalog chỉ là gợi ý — `apps/server/src/catalog/`, 48 preset phân hạng xịn/khá/rẻ kèm `estUsd` cho cost estimate; luôn giữ option "Tự nhập"). Node fal.video có guard: ảnh nối vào + model t2v trong catalog → chặn trước khi submit.
 
 ## AI Agent layer (điểm khác biệt chính)
 
@@ -53,12 +53,12 @@ Layout AI-native: `ConversationRail | ChatPane | SplitDivider | CanvasPane` — 
 
 ```
 apps/server/src/{engine,nodes,agent,catalog,routes,db}
-apps/web/src/{canvas,panels,preview,store,api}
+apps/web/src/{api,canvas,panels,preview,store,ui}
 packages/shared/  # domain PatchOp (applyPatch, PatchOpSchema...) dùng chung FE/BE — export TS source trực tiếp
 e2e/             # Playwright: free tier (mặc định, 0 đồng) + real tier (E2E_REAL=1)
 samples/         # 11 workflow mẫu + assets (seed: pnpm --filter server seed)
 data/artifacts/  # media outputs + uploads/ (gitignored)
-docs/            # spec từng bước (orchestrator viết): SPEC-step1..16
+docs/            # spec từng bước (orchestrator viết): SPEC-step1..28 + DESIGN-ai-native.md (PHẦN 0 = sai lệch ship-vs-design + nợ đã biết)
 ```
 
 ## Thứ tự thực hiện & checkpoint

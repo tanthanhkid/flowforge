@@ -10,6 +10,23 @@
 
 ---
 
+# PHẦN 0 — Hiện trạng sau khi ship (cập nhật 2026-07-13, sau khi hoàn tất 9/9 bước)
+
+Lộ trình đã **ship xong toàn bộ** (project steps 20–28, commits `48a6fa8` → `0e0eec5`). Phần I/II bên dưới giữ nguyên làm tài liệu thiết kế gốc; các điểm sau là **sai lệch giữa thiết kế và bản ship** — khi mâu thuẫn, THỰC TẾ SHIP (mục này + code) thắng:
+
+**Lệch có chủ đích (đã ghi trong spec tương ứng):**
+1. **Thứ tự lộ trình đảo**: `packages/shared` (mục 8 của kế hoạch §8 Phần I) được đôn lên chạy TRƯỚC animation (mục 6) và auto-log (mục 7) — vì cả hai bước sau đều cần `applyPatch` phía client. Mapping thực tế: step 25 = shared, step 26 = animation, step 27 = auto-log (xem CLAUDE.md).
+2. **KHÔNG có nút "Bỏ qua animation"** (Phần I §6 + rủi ro #2): server đã cap tổng pacing ≤1.5s/turn nên không đáng thêm UI — quyết định tại SPEC-step26.md §3.
+3. **Sửa raw JSON qua JsonView và đổi tên workflow KHÔNG vào change log** (vi phạm cục bộ nguyên tắc "mọi thay đổi đều là PatchOp"): 2 luồng này vẫn đi đường PUT cũ — SPEC-step27.md §4 "hạn chế ghi nhận có chủ đích". AI vẫn thấy workflow mới nhất qua system prompt mỗi turn, chỉ digest/tab Lịch sử thiếu entry.
+4. `canvas/Sidebar.tsx` KHÔNG đổi tên thành `NodePalette.tsx` như Phần II §II.4 khuyến nghị (khác thư mục với `ConversationRail.tsx` nên không nhầm import; CLAUDE.md gọi là "Sidebar node palette").
+5. Template summary thay đổi tay (Phần II §II.5 mục 4) được FE sinh với văn phong chữ thường không ngoặc kép (`thêm node fal.image (img-1)`), không theo mẫu chữ hoa của Phần II — Phần II vốn không authoritative.
+
+**Khoảng trống chưa implement (ứng viên cho bước sau, KHÔNG phải đã ship):**
+6. **System-note "Đã xem N thay đổi bạn vừa chỉnh tay…"** trong bubble assistant (Phần I §5): chưa có ở đâu trong code — digest vẫn được đưa vào context AI đầy đủ (cơ chế hoạt động đúng), chỉ thiếu tín hiệu trực quan cho user biết AI đã "đọc" thay đổi tay.
+7. **Diff chip 🔧 (+N node · ~N param)** trên bubble assistant (Phần II §II.5 mục 7): chưa implement (Phần II tham khảo, không bắt buộc).
+
+---
+
 # PHẦN I — Bản hoàn thiện sau judge panel (authoritative)
 
 
