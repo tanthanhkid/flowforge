@@ -26,6 +26,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { findRepoRoot } from '../src/config.js';
 import { backfillConversations } from '../src/db/backfill.js';
+import { ChangesRepo } from '../src/db/changes.js';
 import { openDb } from '../src/db/sqlite.js';
 import { WorkflowsRepo } from '../src/db/workflows.js';
 import { validateWorkflow } from '../src/engine/schema.js';
@@ -127,6 +128,11 @@ function main(): void {
   // (don't rely on the server-startup migration for the first seed run).
   const backfilledCount = backfillConversations(db);
 
+  // SPEC-step31.md F8: same fix as server.ts's startup call — must run AFTER
+  // backfillConversations() above, so every seeded sample already has its
+  // 1-1 conversation before we seed the "trạng thái khởi tạo" snapshot row.
+  const seededSnapshotCount = new ChangesRepo(db).seedInitialSnapshots();
+
   db.close();
 
   console.log(`seed-samples: đã seed ${seeded.length} workflow mẫu vào ${dbPath}:`);
@@ -135,6 +141,9 @@ function main(): void {
   }
   if (backfilledCount > 0) {
     console.log(`seed-samples: đã tạo ${backfilledCount} conversation cho workflow mẫu`);
+  }
+  if (seededSnapshotCount > 0) {
+    console.log(`seed-samples: đã tạo ${seededSnapshotCount} snapshot khởi tạo cho workflow mẫu`);
   }
 }
 

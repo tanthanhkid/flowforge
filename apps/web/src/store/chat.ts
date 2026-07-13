@@ -308,6 +308,36 @@ export const useChatStore = create<ChatState>()((set, get) => ({
   },
 
   async newConversation() {
+    // SPEC-step31.md F4 — the original design (DESIGN-ai-native.md §I.2)
+    // only creates a conversation on the first message; this ships the
+    // create-eagerly architecture instead (kept as-is, no big refactor), so
+    // guard here: if an unused one (`title === '' && nodeCount === 0`, i.e.
+    // never renamed/never given a workflow) already exists, switch to it
+    // instead of POSTing yet another empty row. Caps rack-up from repeated
+    // "+" clicks at 1 empty conversation instead of N.
+    //
+    // Post-review fix — `conversations[].nodeCount` is only ever refreshed by
+    // `loadConversations()` (on mount / after a chat turn completes); it goes
+    // stale the moment a node is added/removed purely manually (dragged from
+    // the palette, etc — no chat turn involved), so trusting it blindly can
+    // dead-end this exact guard: the ACTIVE conversation looks "unused" from
+    // the cache, `newConversation()` treats it as already-current and returns
+    // a no-op, and "+" appears broken. For whichever conversation is
+    // currently on screen, check the LIVE canvas instead of that snapshot —
+    // there's no equivalent live source for any OTHER (non-active)
+    // conversation, so its cached `nodeCount` is still the best signal there.
+    const activeId = get().activeConversationId;
+    const unused = get().conversations.find((c) => {
+      if (c.title !== '') return false;
+      if (c.id === activeId) return useFlowStore.getState().workflow.nodes.length === 0;
+      return c.nodeCount === 0;
+    });
+    if (unused) {
+      if (get().activeConversationId !== unused.id) {
+        await get().selectConversation(unused.id);
+      }
+      return;
+    }
     const conversation = await api.createConversation();
     set((state) => ({
       conversations: [
@@ -518,8 +548,17 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         // overlapping. Also the authoritative reconcile (SPEC-step23.md §4):
         // `adoptWorkflow` here always overwrites whatever `applyOptimisticOp`
         // built up locally during this turn's `patch-op` events above.
+        // `adoptWorkflow` itself fits the viewport only on an id CHANGE
+        // (SPEC-step31.md F1) — this call site's own `requestFitView()`
+        // below stays unconditional regardless, unchanged since step 26.
         useFlowStore.getState().adoptWorkflow(data.workflow);
-        useFlowStore.getState().autoLayout();
+        // `{ log: false }` (SPEC-step31.md F7): this re-layout is a
+        // client-side nudge on top of a workflow the server just persisted
+        // FROM the AI turn itself — logging it through manualLog would
+        // mislabel that AI-turn side effect as a "tay" (manual) change (see
+        // `store/flow.ts`'s `autoLayout` doc comment / `manualLog.ts`'s
+        // header). Only the Toolbar's own "🪄 Sắp xếp" click logs.
+        useFlowStore.getState().autoLayout({ log: false });
         useFlowStore.getState().requestFitView();
       },
       onError: (data) => {

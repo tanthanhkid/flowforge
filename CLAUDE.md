@@ -58,7 +58,7 @@ packages/shared/  # domain PatchOp (applyPatch, PatchOpSchema...) dùng chung FE
 e2e/             # Playwright: free tier (mặc định, 0 đồng) + real tier (E2E_REAL=1)
 samples/         # 11 workflow mẫu + assets (seed: pnpm --filter server seed)
 data/artifacts/  # media outputs + uploads/ (gitignored)
-docs/            # spec từng bước (orchestrator viết): SPEC-step1..30 + DESIGN-ai-native.md (PHẦN 0 = sai lệch ship-vs-design + nợ đã biết)
+docs/            # spec từng bước (orchestrator viết): SPEC-step1..31 + DESIGN-ai-native.md (PHẦN 0 = sai lệch ship-vs-design + nợ đã biết)
 ```
 
 ## Thứ tự thực hiện & checkpoint
@@ -102,8 +102,9 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..30 + D
 
 29. ✅ Guard i2i cho `fal.image` + dạy agent chọn model theo dữ liệu vào (từ bug thật session user 2026-07-13: AI chọn flux/dev t2i cho node có ảnh → đốt tiền vô ích): catalog thêm `imageKind` t2i/i2i (fal API chỉ có đúng 2 category ảnh; 12 preset đều t2i), guard chặn trước khi tốn credit + gợi ý model i2i từ live, khối "QUY TẮC CHỌN MODEL THEO DỮ LIỆU VÀO" + tag `[i2i]`/`[t2i]` trong system prompt, fix sample-stock-restyle (flux/dev → flux-pro/kontext) + regression test quét mọi sample — spec: `docs/SPEC-step29.md`
 30. ✅ AI nhìn thấy kết quả run: `buildRunSummary` (header + từng node state/cache/model/error cắt 200/output basename, cap 1500 ký tự reserve-error-first) vào system prompt chat qua dep optional `getLatestRun` (`SqliteRunStore.latestRunForWorkflow`), rebuild version-conflict cũng refresh; smoke thật: AI trả lời đúng chi tiết run của conversation ly cà phê — spec: `docs/SPEC-step30.md`
+31. ✅ Canvas UX fix pack (user báo "canvas nhiều lỗi UX" → orchestrator audit Playwright screenshot 2 viewport + đọc root-cause, 8 finding F1–F8): fitView khi mở/đổi conversation (`adoptWorkflow` bump fitViewNonce theo `workflow.id` đổi + `minZoom 0.05` — root cause thật của case mở-từ-landing là RF clamp minZoom 0.5 khi pane hẹp), toolbar responsive icon-only dưới `2xl` (1366 hết mất nút), `Popover` thêm `onClose` outside-click/Escape (cost/validate/✨ hết dính), **fix data-loss revert**: seed row "Trạng thái khởi tạo" cho workflow backfill 0-change + PUT đổi nodes/edges ghi change row "Cập nhật thủ công (Save/JSON)" (trả một phần nợ PHẦN 0 #3), "+" reuse conversation rỗng sẵn có, cost popover scroll `max-h-[50vh]`, 🪄 Sắp xếp auto-log 1 entry N move-node (kèm cancelPendingMove chống race debounce drag), label params tiếng Việt + fallback prettify — spec: `docs/SPEC-step31.md`
 
-Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 441 server + 20 shared + 320 web + 27 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên. Backlog UX từ session 2026-07-13: đính kèm ảnh trong composer, CTA/diff chip trên bubble, summary change giàu thông tin, AI đặt tên workflow, badge i2i/t2i trong ModelPicker.
+Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 449 server + 20 shared + 356 web + 32 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên. Backlog UX còn lại (dời sang step 32+): đính kèm ảnh trong composer, CTA/diff chip trên bubble, summary change giàu thông tin, AI đặt tên workflow, badge i2i/t2i trong ModelPicker.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 

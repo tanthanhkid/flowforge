@@ -45,6 +45,72 @@ import { ModelPicker } from './ModelPicker.tsx';
 // ring; a "_MONO" variant for technical/JSON content (--font-mono-data), and
 // an "_ERROR" variant (status-error border/ring) for invalid drafts.
 const LABEL_CLASS = 'block font-mono-data text-[11px] font-bold uppercase tracking-wide text-ink-soft';
+// SPEC-step31.md F6 — a raw camelCase key ("MODELID", "ASPECTRATIO", "EXTRA")
+// jammed together in ALL CAPS is unreadable; a fallback-prettified key
+// ("Model Id") keeps its own field's mono/soft-color chrome but drops the
+// `uppercase` transform (only PARAM_LABELS-mapped keys keep it — those are
+// already human Vietnamese phrases with real word breaks, e.g. "THỜI LƯỢNG
+// (GIÂY)", so ALL CAPS stays readable there).
+const LABEL_CLASS_FALLBACK = 'block font-mono-data text-[11px] font-bold tracking-wide text-ink-soft';
+
+/**
+ * SPEC-step31.md F6 — Vietnamese label for every param key that actually
+ * appears across the 13 node types in `apps/server/src/nodes/` (rechecked
+ * against that source, not guessed): fal.image (modelId/imageSize/seed/
+ * extra), fal.video (modelId/duration/aspectRatio/extra), input.file/
+ * input.image (path), input.markdown (path/content), input.pdf (path/
+ * maxPages), input.text (value), llm.generate (model/system/temperature/
+ * maxTokens — note the real key is `system`, not `systemPrompt`),
+ * llm.transform (instruction/model/temperature), output.collect (none),
+ * text.template (template), vbee.tts (voiceCode/speed/format/bitrate),
+ * video.compose (width/height/fit/loopVideo/fps). A key NOT in this map
+ * falls back to `prettifyParamKey` below. Does not affect what's sent to the
+ * server — `applyField` below still keys off the original param name.
+ */
+const PARAM_LABELS: Record<string, string> = {
+  modelId: 'Model',
+  model: 'Model',
+  imageSize: 'Kích thước ảnh',
+  seed: 'Seed',
+  extra: 'Tham số thêm (JSON)',
+  duration: 'Thời lượng (giây)',
+  aspectRatio: 'Tỉ lệ khung',
+  path: 'Đường dẫn file',
+  content: 'Nội dung (markdown)',
+  maxPages: 'Số trang tối đa',
+  value: 'Nội dung',
+  system: 'System prompt',
+  temperature: 'Temperature',
+  maxTokens: 'Số token tối đa',
+  instruction: 'Chỉ dẫn',
+  template: 'Mẫu ghép',
+  voiceCode: 'Giọng đọc',
+  speed: 'Tốc độ',
+  format: 'Định dạng',
+  bitrate: 'Bitrate',
+  width: 'Chiều rộng (px)',
+  height: 'Chiều cao (px)',
+  fit: 'Kiểu khung hình',
+  loopVideo: 'Lặp video theo audio',
+  fps: 'FPS',
+};
+
+/** Splits a camelCase key into Title Case words, e.g. "modelId" -> "Model Id", "someNewParam" -> "Some New Param" — fallback for any param key not in `PARAM_LABELS` (a future node type's param, or a typo). */
+function prettifyParamKey(name: string): string {
+  const spaced = name
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2');
+  const words = spaced.split(/[\s_-]+/).filter(Boolean);
+  if (words.length === 0) return name;
+  return words.map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()).join(' ');
+}
+
+/** The label text + whether it came from `PARAM_LABELS` (known) or `prettifyParamKey` (fallback) — callers use the latter to pick `LABEL_CLASS` vs `LABEL_CLASS_FALLBACK`. */
+function resolveParamLabel(name: string): { text: string; known: boolean } {
+  const known = PARAM_LABELS[name];
+  return known !== undefined ? { text: known, known: true } : { text: prettifyParamKey(name), known: false };
+}
+
 const FIELD_CLASS =
   'w-full border-2 border-ink bg-paper px-2 py-1.5 text-xs text-ink focus:outline-none focus:border-cat-video focus:shadow-[2px_2px_0_var(--color-cat-video)]';
 const FIELD_ERROR_CLASS =
@@ -87,9 +153,10 @@ interface FieldLabelProps {
 }
 
 function FieldLabel({ name, schema }: FieldLabelProps) {
+  const { text, known } = resolveParamLabel(name);
   return (
     <span className="flex flex-col gap-1">
-      <span className={LABEL_CLASS}>{name}</span>
+      <span className={known ? LABEL_CLASS : LABEL_CLASS_FALLBACK}>{text}</span>
       {schema.description && <span className="text-[11px] text-ink-soft">{schema.description}</span>}
     </span>
   );
@@ -358,7 +425,10 @@ export function ParamsPanel() {
           name === 'modelId' && modelIdModels && modelIdModels.length > 0 ? (
             <div key={name} className="flex flex-col gap-1">
               <ModelPicker
-                name={name}
+                // `name` here is ModelPicker's display label (SPEC-step31.md
+                // F6) — its own onApply/params plumbing below still keys off
+                // the real param name captured in this closure, untouched.
+                name={resolveParamLabel(name).text}
                 value={node.params[name]}
                 entries={modelIdModels}
                 preferI2V={preferI2V}
@@ -373,7 +443,7 @@ export function ParamsPanel() {
           ) : name === 'model' && llmModels && llmModels.length > 0 ? (
             <ModelPicker
               key={name}
-              name={name}
+              name={resolveParamLabel(name).text}
               value={node.params[name]}
               entries={llmModels}
               defaultOption={{ label: '🔧 Mặc định hệ thống', value: '' }}

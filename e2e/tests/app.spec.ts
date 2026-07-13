@@ -818,3 +818,289 @@ test.describe('FlowForge — free tier (utility nodes only)', () => {
     await expect(page.getByTestId('history-item').first()).toContainText(/Khôi phục về trước thay đổi #\d+/);
   });
 });
+
+/**
+ * SPEC-step31.md — canvas UX fix pack from the 2026-07-13 visual audit.
+ * Covers the 4 findings the "Nghiệm thu" section calls out for E2E (F1/F2/F3/
+ * F4) — F5/F6/F7/F8 only need unit tests (already added by the implement
+ * agents alongside their fixes) since they don't have a distinct browser-
+ * observable interaction beyond what those unit tests already pin down.
+ *
+ * Own test.describe block (not appended to the block above) per the spec's
+ * "thêm describe mới" instruction — still the SAME file, so Playwright's
+ * default (non-`fullyParallel`) single-worker-per-file scheduling keeps every
+ * test below strictly after the block above, in declaration order.
+ */
+test.describe('canvas UX (step 31)', () => {
+  /**
+   * SPEC-step31.md §F1 — reproduces the audit's exact symptom (open/switch a
+   * conversation whose workflow's nodes sit outside the current viewport →
+   * only a sliver, or nothing, is visible) deterministically instead of via
+   * an actual sample: a synthetic workflow with 3 nodes placed thousands of
+   * px away from the origin is PUT onto a real (renamed, so it survives
+   * `newConversation()`'s F4 dedup guard below) conversation's own workflow
+   * id, then a second, genuinely-different conversation is opened in between
+   * to force the id change `adoptWorkflow` (store/flow.ts) keys its
+   * `fitViewNonce` bump off. React Flow keeps every node's DOM element
+   * mounted even far outside the viewport (only the *visual* pan/zoom moves),
+   * so `node-card` bounding boxes are a direct, screenshot-free way to prove
+   * the canvas actually re-centered.
+   */
+  test('F1: switching to a conversation whose workflow sits off-screen re-fits the viewport', async ({ page }) => {
+    await page.goto('/');
+
+    // Capture the freshly-created conversation's *workflow* id straight off
+    // the wire (`GET /api/conversations/:id`, fired by `selectConversation`
+    // inside `newConversation()`) — the same id a later JSON-view Apply +
+    // Save must reuse so the far-off nodes below land on THIS conversation's
+    // workflow row, not an orphaned one.
+    const conversationResponse = page.waitForResponse(
+      (res) => res.request().method() === 'GET' && /\/api\/conversations\/[^/]+$/.test(new URL(res.url()).pathname),
+    );
+    await page.getByTestId('new-conversation').click();
+    const { workflow: initialWorkflow } = (await (await conversationResponse).json()) as {
+      workflow: WorkflowLike;
+    };
+
+    const title = `e2e f1 fitview ${Date.now()}`;
+    await page.getByTestId('chat-rename-btn').click();
+    await page.getByTestId('chat-rename-input').fill(title);
+    await page.getByTestId('chat-rename-input').press('Enter');
+    await expect(page.getByTestId('chat-pane').getByText(title)).toBeVisible();
+
+    await openCanvasMode(page);
+
+    const farAwayWorkflow: WorkflowLike = {
+      version: 1,
+      id: initialWorkflow.id,
+      name: title,
+      nodes: [
+        { id: 'input_1', type: 'input.text', params: { value: 'a' }, position: { x: 4000, y: 3000 } },
+        { id: 'input_2', type: 'input.text', params: { value: 'b' }, position: { x: 4400, y: 3400 } },
+        { id: 'input_3', type: 'input.text', params: { value: 'c' }, position: { x: 4800, y: 3800 } },
+      ],
+      edges: [],
+    };
+    await applyWorkflowViaJsonView(page, farAwayWorkflow);
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+
+    const putResponse = page.waitForResponse(
+      (res) => res.request().method() === 'PUT' && /\/api\/workflows\/[^/]+$/.test(new URL(res.url()).pathname),
+    );
+    await page.getByTestId('save-btn').click();
+    await putResponse;
+    await expect(page.getByTestId('save-btn')).toBeDisabled();
+
+    // Switch to a genuinely different (empty) conversation — this
+    // conversation is now titled, so F4's "reuse the unused one" guard does
+    // NOT kick in and a real new conversation+workflow pair is created.
+    await page.getByTestId('new-conversation').click();
+    await expect(page.getByTestId('node-card')).toHaveCount(0);
+
+    // Switch back to the far-off-nodes conversation via the rail — this is
+    // the exact "đổi conversation" path F1 fixes.
+    const item = page.getByTestId('conversation-item').filter({ hasText: title });
+    await item.getByRole('button').first().click();
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+
+    // fitView animates over 300ms (FlowCanvas.tsx's `fitViewNonce` effect) —
+    // poll instead of asserting once.
+    await expect
+      .poll(
+        async () => {
+          const paneBox = await page.getByTestId('canvas-pane').boundingBox();
+          if (!paneBox) return false;
+          const cards = await page.getByTestId('node-card').all();
+          if (cards.length !== 3) return false;
+          for (const card of cards) {
+            const box = await card.boundingBox();
+            if (!box) return false;
+            const withinX = box.x >= paneBox.x - 1 && box.x + box.width <= paneBox.x + paneBox.width + 1;
+            const withinY = box.y >= paneBox.y - 1 && box.y + box.height <= paneBox.y + paneBox.height + 1;
+            if (!withinX || !withinY) return false;
+          }
+          return true;
+        },
+        { timeout: 5_000 },
+      )
+      .toBe(true);
+  });
+
+  /**
+   * SPEC-step31.md §F1 follow-up (2026-07-13 bug report) — the F1 test above
+   * only covers "canvas pane already visible, switch to a different
+   * conversation". The audit's actual unresolved repro is opening a WIDE
+   * workflow straight from the chat-only landing view: live Playwright
+   * instrumentation of `.react-flow__viewport`'s transform showed every
+   * `fitView()` retry (the `fitViewNonce` bump in `adoptWorkflow` + both of
+   * CanvasPane's visible-effect calls) was already firing against the
+   * correct, fully-settled 50/50-split canvas width — the transform
+   * converged smoothly and then held, but at exactly `scale(0.5)`, React
+   * Flow's default `minZoom`. A 50/50 split's actual usable canvas width
+   * (Sidebar + right-panel are fixed-width, so a ~1660px container leaves
+   * only ~300px for the graph itself) is too narrow for a horizontally wide
+   * workflow to honestly fit at zoom >= 0.5, so the fit was silently clamped
+   * and stayed clipped no matter how many times it retried. Fixed by
+   * lowering `<ReactFlow minZoom>` in FlowCanvas.tsx (see its comment)
+   * instead of adding more retries. This test reloads the app fresh (clears
+   * the persisted `ff.splitRatio` first, so it lands exactly like a
+   * brand-new browser tab: chat-only, canvas pane 0px/hidden,
+   * `activeConversationId: null`) and opens a 3-node workflow spread across
+   * 2000px of flow-space — same order of magnitude as the real sample that
+   * triggered this bug.
+   */
+  test('F1 (mở từ landing): opening a wide workflow from the chat-only landing view re-fits without clamping to a stale zoom', async ({
+    page,
+  }) => {
+    await page.goto('/');
+
+    const conversationResponse = page.waitForResponse(
+      (res) => res.request().method() === 'GET' && /\/api\/conversations\/[^/]+$/.test(new URL(res.url()).pathname),
+    );
+    await page.getByTestId('new-conversation').click();
+    const { workflow: initialWorkflow } = (await (await conversationResponse).json()) as {
+      workflow: WorkflowLike;
+    };
+
+    const title = `e2e f1 landing ${Date.now()}`;
+    await page.getByTestId('chat-rename-btn').click();
+    await page.getByTestId('chat-rename-input').fill(title);
+    await page.getByTestId('chat-rename-input').press('Enter');
+    await expect(page.getByTestId('chat-pane').getByText(title)).toBeVisible();
+
+    await openCanvasMode(page);
+
+    const wideWorkflow: WorkflowLike = {
+      version: 1,
+      id: initialWorkflow.id,
+      name: title,
+      nodes: [
+        { id: 'input_1', type: 'input.text', params: { value: 'a' }, position: { x: 0, y: 0 } },
+        { id: 'input_2', type: 'input.text', params: { value: 'b' }, position: { x: 1000, y: 150 } },
+        { id: 'input_3', type: 'input.text', params: { value: 'c' }, position: { x: 2000, y: 0 } },
+      ],
+      edges: [],
+    };
+    await applyWorkflowViaJsonView(page, wideWorkflow);
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+
+    const putResponse = page.waitForResponse(
+      (res) => res.request().method() === 'PUT' && /\/api\/workflows\/[^/]+$/.test(new URL(res.url()).pathname),
+    );
+    await page.getByTestId('save-btn').click();
+    await putResponse;
+    await expect(page.getByTestId('save-btn')).toBeDisabled();
+
+    // Reload as a genuinely fresh landing: clear the persisted split ratio
+    // (this same page already left it at 0 = canvas-only via `openCanvasMode`
+    // above) so the reload lands exactly like a brand-new browser tab —
+    // chat-only, canvas pane hidden, no active conversation.
+    await page.evaluate(() => window.localStorage.removeItem('ff.splitRatio'));
+    await page.goto('/');
+    const canvasPane = page.getByTestId('canvas-pane');
+    await expect(canvasPane).toHaveCSS('visibility', 'hidden');
+
+    const item = page.getByTestId('conversation-item').filter({ hasText: title });
+    await item.getByRole('button').first().click();
+    await expect(canvasPane).toHaveCSS('visibility', 'visible');
+    await expect(page.getByTestId('node-card')).toHaveCount(3);
+
+    // fitView animates over 300ms, retried up to ~350ms later again
+    // (CanvasPane's visible-effect) — poll instead of asserting once.
+    await expect
+      .poll(
+        async () => {
+          const paneBox = await canvasPane.boundingBox();
+          if (!paneBox) return false;
+          const cards = await page.getByTestId('node-card').all();
+          if (cards.length !== 3) return false;
+          for (const card of cards) {
+            const box = await card.boundingBox();
+            if (!box) return false;
+            const withinX = box.x >= paneBox.x - 1 && box.x + box.width <= paneBox.x + paneBox.width + 1;
+            const withinY = box.y >= paneBox.y - 1 && box.y + box.height <= paneBox.y + paneBox.height + 1;
+            if (!withinX || !withinY) return false;
+          }
+          return true;
+        },
+        { timeout: 5_000 },
+      )
+      .toBe(true);
+  });
+
+  /**
+   * SPEC-step31.md §F2 — below the `2xl` (1536px) breakpoint the Toolbar's
+   * secondary buttons drop their text label (icon-only), so at 1366×768
+   * every listed control must still be visible with no horizontal scroll on
+   * the header itself (the `overflow-x-auto` safety net from step 18 staying
+   * unused, not the fix).
+   */
+  test('F2: at 1366×768 every toolbar control is visible with no header overflow', async ({ page }) => {
+    await page.setViewportSize({ width: 1366, height: 768 });
+    await page.goto('/');
+
+    for (const testId of [
+      'validate-btn',
+      'cost-estimate',
+      'run-btn',
+      'run-force-btn',
+      'auto-layout-btn',
+      'preview-toggle-btn',
+      'json-view-btn',
+      'settings-btn',
+    ]) {
+      await expect(page.getByTestId(testId)).toBeVisible();
+    }
+
+    const header = page.locator('header');
+    const { scrollWidth, clientWidth } = await header.evaluate((el) => ({
+      scrollWidth: el.scrollWidth,
+      clientWidth: el.clientWidth,
+    }));
+    expect(scrollWidth).toBeLessThanOrEqual(clientWidth);
+  });
+
+  /**
+   * SPEC-step31.md §F3 — `ui/Popover.tsx`'s new `onClose` (outside-mousedown
+   * / Escape) wired into the Toolbar's 💰 cost-estimate popover: clicking
+   * anywhere else on the canvas must close it, without needing its own ✕.
+   */
+  test('F3: clicking outside the cost-estimate popover closes it', async ({ page }) => {
+    await page.goto('/');
+    await openCanvasMode(page);
+
+    await page.getByTestId('cost-estimate').click();
+    const popoverHeading = page.getByText('Ước tính chi phí', { exact: true });
+    await expect(popoverHeading).toBeVisible({ timeout: 10_000 });
+
+    // A point near the canvas's own top-left corner — definitely outside
+    // both the popover panel (anchored under the toolbar's cost badge) and
+    // the empty-canvas CTA card (centered, `pointer-events-auto` only on its
+    // own button).
+    const canvasBox = await page.getByTestId('flow-canvas').boundingBox();
+    if (!canvasBox) throw new Error('flow-canvas not found');
+    await page.mouse.click(canvasBox.x + 20, canvasBox.y + 20);
+
+    await expect(popoverHeading).toHaveCount(0);
+  });
+
+  /**
+   * SPEC-step31.md §F4 — `newConversation()` now reuses an existing unused
+   * (`title === '' && nodeCount === 0`) conversation instead of POSTing a
+   * fresh empty one every click, capping rack-up at 1 empty row regardless
+   * of how many times "+" is clicked in a row.
+   */
+  test('F4: clicking "+ Cuộc trò chuyện mới" twice in a row does not add 2 empty conversations', async ({ page }) => {
+    await page.goto('/');
+
+    await page.getByTestId('new-conversation').click();
+    await expect(page.getByTestId('chat-rename-btn')).toBeVisible();
+    const countAfterFirstClick = await page.getByTestId('conversation-item').count();
+
+    await page.getByTestId('new-conversation').click();
+    await expect(page.getByTestId('chat-rename-btn')).toBeVisible();
+    await expect
+      .poll(() => page.getByTestId('conversation-item').count(), { timeout: 2_000 })
+      .toBe(countAfterFirstClick);
+  });
+});

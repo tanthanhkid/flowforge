@@ -8,13 +8,28 @@
  */
 import type { FastifyInstance } from 'fastify';
 import type { ZodError } from 'zod';
+import type { ChangesRepo } from '../db/changes.js';
+import type { ConversationsRepo } from '../db/conversations.js';
 import type { WorkflowsRepo } from '../db/workflows.js';
 import type { NodeRegistry } from '../engine/registry.js';
-import { validateWorkflow, WorkflowSchema, type ValidationIssue } from '../engine/schema.js';
+import { validateWorkflow, WorkflowSchema, type ValidationIssue, type Workflow } from '../engine/schema.js';
 
 export interface WorkflowsRouteDeps {
   workflowsRepo: WorkflowsRepo;
   registry: NodeRegistry;
+  /** SPEC-step31.md F8 point 2: PUT logs a change row when nodes/edges
+   * actually change. Both optional so any test/caller that only needs
+   * plain CRUD (no change-log audit trail) can keep constructing
+   * `WorkflowsRouteDeps` without them — PUT then silently skips logging,
+   * same as a workflow with no paired conversation already does below. */
+  conversationsRepo?: ConversationsRepo;
+  changesRepo?: ChangesRepo;
+}
+
+/** SPEC-step31.md F8 point 2: "so sánh JSON.stringify bản cũ/mới" — only
+ * `nodes`/`edges` matter (a rename-only PUT must NOT log, "tránh noise"). */
+function structureChanged(before: Pick<Workflow, 'nodes' | 'edges'>, after: Pick<Workflow, 'nodes' | 'edges'>): boolean {
+  return JSON.stringify(before.nodes) !== JSON.stringify(after.nodes) || JSON.stringify(before.edges) !== JSON.stringify(after.edges);
 }
 
 function zodErrorToIssues(error: ZodError): ValidationIssue[] {
@@ -25,7 +40,7 @@ function zodErrorToIssues(error: ZodError): ValidationIssue[] {
 }
 
 export function registerWorkflowsRoutes(app: FastifyInstance, deps: WorkflowsRouteDeps): void {
-  const { workflowsRepo, registry } = deps;
+  const { workflowsRepo, registry, conversationsRepo, changesRepo } = deps;
 
   app.get('/api/workflows', async () => workflowsRepo.list());
 
@@ -64,7 +79,31 @@ export function registerWorkflowsRoutes(app: FastifyInstance, deps: WorkflowsRou
     // The URL's :id is the source of truth for storage — always upsert under
     // it, regardless of whatever id the body itself carries.
     const workflow = { ...parsed.data, id };
+    const before = workflowsRepo.get(id);
     workflowsRepo.upsert(workflow);
+
+    // SPEC-step31.md F8 point 2: log a "Cập nhật thủ công (Save/JSON)" change
+    // row when nodes/edges actually changed — the old Save button + JSON-view
+    // Apply used to upsert silently, leaving a hole in the change-log chain
+    // that made a later revert jump straight past this edit. Rename-only
+    // PUTs stay silent (tránh noise). A workflow with no paired conversation
+    // (legacy POST /api/workflows callers) also stays silent instead of
+    // erroring — PUT's contract has never required a conversation.
+    if (conversationsRepo && changesRepo && structureChanged(before ?? { nodes: [], edges: [] }, workflow)) {
+      const conversation = conversationsRepo.getByWorkflowId(id);
+      if (conversation) {
+        changesRepo.create({
+          workflowId: id,
+          conversationId: conversation.id,
+          source: 'user',
+          scope: 'structural',
+          ops: [],
+          summary: 'Cập nhật thủ công (Save/JSON)',
+          snapshotAfter: workflow,
+        });
+      }
+    }
+
     reply.send({ id });
   });
 

@@ -146,6 +146,18 @@ export interface FlowState {
    * /api/workflows/:id` round-trip. Same reset semantics as `loadWorkflow`
    * (stop any live run subscription, clear selection/dirty/validation/etc.)
    * — `loadWorkflow` itself is now just `getWorkflow` + this.
+   *
+   * SPEC-step31.md F1 — also bumps `fitViewNonce` (see below), but ONLY when
+   * the incoming workflow's `id` differs from whatever was previously
+   * loaded: that's the "first load or conversation switch" case the audit
+   * found broken (React Flow's own `fitView` prop only fires once at mount,
+   * and the canvas stays mounted across a conversation switch — see
+   * `canvas/FlowCanvas.tsx`'s `fitViewNonce` effect / `panels/CanvasPane.tsx`'s
+   * visible-effect). A SAME-id adoption is a reconcile of the workflow
+   * already on screen (`store/chat.ts`'s SSE `message` handler — which fits
+   * separately and unconditionally right after this call, unchanged since
+   * step 26 — `HistoryPanel.tsx`'s revert, a future `POST .../changes`
+   * response) and must never reset the pan/zoom the user is mid-gesture on.
    */
   adoptWorkflow(workflow: Workflow): void;
   /**
@@ -249,12 +261,27 @@ export interface FlowState {
   /**
    * SPEC-step16.md §3 — recomputes every node's position via
    * `layoutWorkflow` using the current `nodeSizes` (falling back to
-   * NodeCard's fixed box size for anything not yet measured), keeps the
-   * current selection, and marks the workflow dirty (positions changed).
-   * Backs both the Toolbar "🪄 Sắp xếp" button and the auto-run-once after a
-   * successful ✨ generate.
+   * NodeCard's fixed box size for anything not yet measured), keeping the
+   * current selection. Backs both the Toolbar "🪄 Sắp xếp" button and
+   * `store/chat.ts`'s post-turn re-layout of the AI's own coarse positions.
+   *
+   * SPEC-step31.md F7 — `opts.log` (default `true`) decides how the moved
+   * positions are persisted:
+   * - `true` (Toolbar's manual click) with an active conversation: goes
+   *   through the SAME `manualLog.ts` queue a node drag does — ONE entry
+   *   batching every node that actually moved as its own `move-node` op
+   *   (cosmetic scope), summary "sắp xếp lại bố cục (N node)". Log success
+   *   means already-persisted, so `dirty` is NOT set here (matches every
+   *   other logged mutator below).
+   * - `false` (`store/chat.ts`'s post-turn call) — or no active
+   *   conversation — keeps the pre-existing behavior: just set `dirty: true`
+   *   (the old Save-button path), no manualLog entry. `chat.ts` passes
+   *   `false` deliberately: this re-layout is a coarse client-side nudge on
+   *   top of a workflow the server *just* persisted from the AI turn itself
+   *   — logging it as a "tay" (manual) change would mislabel that AI-turn
+   *   side effect (see `manualLog.ts`'s own header).
    */
-  autoLayout(): void;
+  autoLayout(opts?: { log?: boolean }): void;
   /** See `fitViewNonce` above. */
   requestFitView(): void;
 }
@@ -385,7 +412,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
 
   adoptWorkflow(workflow) {
     stopActiveRunSubscription();
-    set({
+    set((state) => ({
       workflow,
       selectedNodeId: null,
       runId: undefined,
@@ -396,7 +423,10 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       forceNodeIds: [],
       rightTab: 'params',
       scrollToNodeId: null,
-    });
+      // SPEC-step31.md F1 — see the interface doc comment above: only a
+      // workflow.id change re-centers the viewport.
+      ...(state.workflow.id !== workflow.id ? { fitViewNonce: state.fitViewNonce + 1 } : {}),
+    }));
   },
 
   applyOptimisticOp(op) {
@@ -777,11 +807,47 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     set({ nodeSizes: sizes });
   },
 
-  autoLayout() {
-    set((state) => ({
-      workflow: layoutWorkflow(state.workflow, state.nodeSizes),
-      dirty: true,
-    }));
+  autoLayout(opts) {
+    const state = get();
+    const laidOut = layoutWorkflow(state.workflow, state.nodeSizes);
+    const logged = (opts?.log ?? true) && hasActiveConversation();
+
+    if (!logged) {
+      set({ workflow: laidOut, dirty: true });
+      return;
+    }
+
+    // SPEC-step31.md F7 — only the nodes whose position actually changed
+    // (comparing against the pre-layout workflow, not e.g. every node
+    // unconditionally, which `layoutWorkflow` recomputes regardless of
+    // whether the result differs from where it already was). `position` is
+    // optional on `WorkflowNode` (a node can be un-positioned before its
+    // first layout) even though `layoutWorkflow` always fills one in here —
+    // fall back to the same `{ x: 0, y: 0 }` `layoutWorkflow` itself uses.
+    const moves: PatchOp[] = [];
+    const movedNodeIds: string[] = [];
+    for (const node of laidOut.nodes) {
+      const position = node.position ?? { x: 0, y: 0 };
+      const before = state.workflow.nodes.find((n) => n.id === node.id);
+      const beforePosition = before?.position ?? { x: 0, y: 0 };
+      if (!before || beforePosition.x !== position.x || beforePosition.y !== position.y) {
+        moves.push({ op: 'move-node', nodeId: node.id, position });
+        movedNodeIds.push(node.id);
+      }
+    }
+    set({ workflow: laidOut });
+    if (moves.length > 0) {
+      // Post-review fix (F7 follow-up) — a node dragged just before this
+      // click still has its OWN 500ms move debounce armed (`scheduleMove`,
+      // manualLog.ts) targeting its pre-layout position. Left alone, that
+      // stale entry fires after this batch (same serialized queue, FIFO)
+      // and silently reintroduces the old position server-side with no
+      // `dirty` flag to catch the divergence (SPEC-step31.md F7 review).
+      // Cancel it for every node this batch itself is about to move so this
+      // entry's own position is the last word.
+      for (const nodeId of movedNodeIds) cancelPendingMove(nodeId);
+      enqueueManualOps(state.workflow.id, moves, `sắp xếp lại bố cục (${moves.length} node)`);
+    }
   },
 
   requestFitView() {

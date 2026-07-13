@@ -90,8 +90,8 @@ sửa). Tab **Lịch sử** (panel phải) xem ai đổi gì, bấm ↺ để kh
 ## Test
 
 ```bash
-pnpm -r test                 # unit: 441 server + 20 shared + 320 web
-pnpm run e2e                 # Playwright free tier: 27 test, 0 chi phí API
+pnpm -r test                 # unit: 449 server + 20 shared + 356 web
+pnpm run e2e                 # Playwright free tier: 32 test, 0 chi phí API
                              #   (5 test luồng chat chạy qua mock OpenRouter nội bộ)
 pnpm run e2e:real            # 3 test gọi API thật (~$0.01–0.05/lần) — chạy chủ động
 pnpm --filter server smoke   # smoke 3 provider thật (LLM + TTS + ảnh rẻ)
@@ -121,7 +121,7 @@ rebuild prompt 1 lần) + `changeDigest.ts` (nén change log vào context).
 (`applyPatch`, `PatchOpSchema`) nằm ở `packages/shared`, dùng chung
 server/web (web apply optimistic từng op để animate). Node đăng ký qua
 NodeRegistry (`apps/server/src/nodes` — thêm node = thêm 1 file). Chi tiết:
-`docs/DESIGN-ai-native.md` + `docs/SPEC-step1.md` → `docs/SPEC-step30.md`.
+`docs/DESIGN-ai-native.md` + `docs/SPEC-step1.md` → `docs/SPEC-step31.md`.
 
 ```
 apps/server/src/{engine,nodes,agent,catalog,routes,db}
@@ -130,7 +130,7 @@ packages/shared/    # domain PatchOp dùng chung FE/BE (export TS source, không
 e2e/                # Playwright free tier (mock OpenRouter) + real tier gated
 samples/            # 11 workflow mẫu + assets
 data/artifacts/     # media outputs + uploads (gitignored)
-docs/               # DESIGN-ai-native.md + SPEC-step1..30
+docs/               # DESIGN-ai-native.md + SPEC-step1..31
 ```
 
 ## Node types (13)

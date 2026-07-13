@@ -104,6 +104,16 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
     app.log.info(`[backfill] tạo ${backfilledCount} conversation cho workflow mồ côi`);
   }
 
+  // SPEC-step31.md F8: must run AFTER backfillConversations() above — needs
+  // every workflow to already have its 1-1 conversation — to seed the
+  // "trạng thái khởi tạo" snapshot row any workflow with zero change rows is
+  // still missing, so a revert of its first real change has a correct
+  // predecessor instead of falling back to emptyWorkflow().
+  const seededSnapshotCount = changesRepo.seedInitialSnapshots();
+  if (seededSnapshotCount > 0) {
+    app.log.info(`[backfill] tạo ${seededSnapshotCount} snapshot khởi tạo cho workflow chưa có change row`);
+  }
+
   await app.register(cors, { origin: true });
   await app.register(multipart, { limits: { fileSize: MAX_UPLOAD_BYTES, files: 1 } });
 
@@ -130,7 +140,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
 
   registerRegistryRoutes(app, registry);
   registerModelCatalogRoutes(app, { db });
-  registerWorkflowsRoutes(app, { workflowsRepo, registry });
+  registerWorkflowsRoutes(app, { workflowsRepo, registry, conversationsRepo, changesRepo });
   registerRunsRoutes(app, { runManager, workflowsRepo, db });
   registerArtifactsRoutes(app, artifactsDir);
   registerUploadRoutes(app, artifactsDir);

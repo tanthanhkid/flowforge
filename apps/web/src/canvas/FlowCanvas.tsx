@@ -292,6 +292,29 @@ function FlowCanvasInner() {
         onPaneClick={onPaneClick}
         deleteKeyCode={['Backspace', 'Delete']}
         fitView
+        // SPEC-step31.md F1 (follow-up fix, 2026-07-13) — root cause found by
+        // live Playwright instrumentation of the "open a wide/tall workflow
+        // from the landing page" repro: EVERY one of the 3 `fitView()` calls
+        // (the id-change nonce bump in `adoptWorkflow`, and CanvasPane's
+        // visible-effect immediate + +350ms calls) was already firing with
+        // the CORRECT, final, non-degenerate container size — the earlier
+        // "container still 0px" theory was wrong. The viewport transform was
+        // observed converging smoothly to `scale(0.5)` every single time and
+        // then holding there, which is React Flow's DEFAULT `minZoom` — a
+        // 40/60 split canvas pane is only ~300px wide once the fixed-width
+        // Sidebar/right-panel are subtracted, and a sprawled 9-node workflow
+        // (e.g. `sample-value-video`, node x-span ~2000px) genuinely needs a
+        // computed fit zoom well below 0.5 to show every node — so `fitView`
+        // was honestly computing e.g. ~0.12 and then getting silently
+        // clamped up to 0.5, leaving nodes clipped no matter how many times
+        // or how correctly-timed the retry. (Confirmed: the same conversation
+        // opened directly in canvas-only mode, where the pane is 3-4x wider,
+        // fits perfectly at the *same* default minZoom — the clamp just never
+        // binds there.) Lowering the floor here — rather than adding yet more
+        // retries — fixes it for any pane width/workflow-size combination,
+        // and as a side effect gives users more zoom-out headroom for large
+        // workflows generally (previously capped at 50%).
+        minZoom={0.05}
         // SPEC-step18.md §8b.2 (user request 11-07-2026): touchpad 2-finger
         // scroll pans the canvas freely in any direction (Figma-style), on
         // top of the default click-drag pan and pinch/Ctrl+scroll zoom —

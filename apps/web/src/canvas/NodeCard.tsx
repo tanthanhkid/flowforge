@@ -320,7 +320,10 @@ export function NodeCard({ data, selected, dragging }: NodeProps<FlowNode>) {
           it here just avoids it ever perturbing the header's justify-between
           layout. */}
       {showEdit && (
-        <Popover anchorRef={editBtnRef} align="right" className="w-64 p-2">
+        // SPEC-step31.md §F3 — same outside-click/Escape close as the two
+        // Toolbar popovers (validate/cost estimate); mirrors the existing ✕
+        // button's `setShowEdit(false)`.
+        <Popover anchorRef={editBtnRef} align="right" className="w-64 p-2" onClose={() => setShowEdit(false)}>
           <div className="mb-1 flex items-center justify-between">
             <span className="font-mono-data text-[11px] font-bold uppercase text-ink">Sửa node bằng AI</span>
             <button

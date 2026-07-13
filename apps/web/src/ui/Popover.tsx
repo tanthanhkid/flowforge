@@ -34,8 +34,23 @@
  * final `left` into `[VIEWPORT_MARGIN, window.innerWidth - VIEWPORT_MARGIN -
  * width]` — applied uniformly regardless of `align`, so both alignment
  * modes stay fully on-screen even in a narrow window.
+ *
+ * SPEC-step31.md §F3 (post-audit fix): this primitive was display-only — no
+ * caller ever closed a popover except via its own explicit ✕ button, so a
+ * popover stayed mounted through clicking elsewhere on the canvas, selecting
+ * a different node, switching conversation (itself just a click on a rail
+ * item — an "outside click" like any other), changing layout mode, or
+ * pressing Escape. Fix: an optional `onClose` prop — when passed, a
+ * `mousedown` listener (capture phase, so it runs before the click that
+ * opened/toggled the trigger's own state) closes on any mousedown whose
+ * target is outside *both* the portaled panel and the trigger's own anchor
+ * element (skipping the anchor is what stops a click that re-toggles the
+ * trigger from double-firing: the trigger's own `onClick` already owns
+ * that), plus a `keydown` Escape listener. Omitting `onClose` (existing
+ * callers, until each is migrated) leaves this component exactly as
+ * display-only as before — no listener is ever attached.
  */
-import { useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from 'react';
 import { createPortal } from 'react-dom';
 
 export interface PopoverProps {
@@ -45,6 +60,12 @@ export interface PopoverProps {
   anchorRef: RefObject<HTMLElement | null>;
   /** Horizontal anchor edge against the trigger. Defaults to `left`. */
   align?: 'left' | 'right';
+  /**
+   * Called on an outside mousedown (anywhere but the panel or the anchor) or
+   * an Escape keydown. Optional — omitting it keeps this component
+   * display-only, matching its behavior before SPEC-step31.md §F3.
+   */
+  onClose?: () => void;
 }
 
 interface AnchorRect {
@@ -56,10 +77,33 @@ interface AnchorRect {
 /** Minimum gap kept between the popover panel and either viewport edge. */
 const VIEWPORT_MARGIN = 8;
 
-export function Popover({ children, className = '', anchorRef, align = 'left' }: PopoverProps) {
+export function Popover({ children, className = '', anchorRef, align = 'left', onClose }: PopoverProps) {
   const [rect, setRect] = useState<AnchorRect | null>(null);
   const [left, setLeft] = useState<number | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // Outside-mousedown / Escape close (see file header). A plain `useEffect`
+  // (not `useLayoutEffect`) — this only wires up event listeners, nothing
+  // here needs to run before paint.
+  useEffect(() => {
+    if (!onClose) return;
+    function handlePointerDown(event: MouseEvent): void {
+      const target = event.target as Node | null;
+      if (!target) return;
+      if (panelRef.current?.contains(target)) return;
+      if (anchorRef.current?.contains(target)) return;
+      onClose?.();
+    }
+    function handleKeyDown(event: KeyboardEvent): void {
+      if (event.key === 'Escape') onClose?.();
+    }
+    document.addEventListener('mousedown', handlePointerDown, true);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown, true);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose, anchorRef]);
 
   // Re-measure synchronously before paint (avoids a visible jump from 0,0)
   // and again on resize/scroll anywhere in the document — the anchor can sit

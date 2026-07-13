@@ -13,6 +13,20 @@
  * entirely (its natural-language-to-workflow job is now the chat pane's,
  * `POST /api/agent/generate-workflow` itself is untouched/still used
  * elsewhere) and §3 added the `ModeToggle` group.
+ *
+ * SPEC-step31.md §F2 — below `2xl` (1536px, measured live at 1366×768 via a
+ * throwaway Playwright script against the running dev server: at the `xl`
+ * (1280px) breakpoint the spec first suggested, 1366 is itself ≥1280 so the
+ * "wide" label would still render and the header would still overflow by
+ * ~230px; only `2xl` keeps 1366 in the "narrow" bucket) the secondary
+ * buttons (Validate, 🪄 Sắp xếp, 👁 Preview, {} JSON, Run ⚡ bỏ cache) drop
+ * their text label and show icon-only, via a `<span className="hidden
+ * 2xl:inline">` around just the label — the icon glyph itself is a sibling
+ * span outside that wrapper, so it stays visible at every width and the
+ * label reappears alongside it from `2xl` up. Every icon-only button keeps
+ * both `title` and `aria-label` (same string) so the control's meaning
+ * survives losing its visible text. The workflow-name input mirrors the
+ * same breakpoint (`w-40 2xl:w-64`, was a fixed `w-48`).
  */
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useFlowStore } from '../store/flow.ts';
@@ -200,7 +214,7 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
         onChange={handleNameChange}
         placeholder="Workflow name"
         aria-label="Tên workflow"
-        className="h-9 w-48 shrink-0 border-2 border-ink bg-paper px-2 text-xs font-bold text-ink shadow-hard-2 placeholder:font-normal placeholder:text-ink-soft focus:border-cat-video focus:shadow-[2px_2px_0_var(--color-cat-video)] focus:outline-none"
+        className="h-9 w-40 shrink-0 border-2 border-ink bg-paper px-2 text-xs font-bold text-ink shadow-hard-2 placeholder:font-normal placeholder:text-ink-soft focus:border-cat-video focus:shadow-[2px_2px_0_var(--color-cat-video)] focus:outline-none 2xl:w-64"
       />
 
       <ToolbarDivider />
@@ -222,11 +236,19 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
 
       {/* Group 3: Validate · 💰 cost estimate */}
       <div ref={validateBtnWrapRef} className="relative shrink-0">
-        <Button type="button" data-testid="validate-btn" onClick={() => void handleValidate()} disabled={validating}>
-          {validating ? 'Validating…' : 'Validate'}
+        <Button
+          type="button"
+          data-testid="validate-btn"
+          onClick={() => void handleValidate()}
+          disabled={validating}
+          title="Validate"
+          aria-label="Validate"
+        >
+          <span aria-hidden="true">✓</span>
+          <span className="hidden 2xl:inline">{validating ? 'Validating…' : 'Validate'}</span>
         </Button>
         {showIssues && (
-          <Popover anchorRef={validateBtnWrapRef} className="w-72 p-3">
+          <Popover anchorRef={validateBtnWrapRef} className="w-72 p-3" onClose={() => setShowIssues(false)}>
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="font-mono-data text-xs font-bold text-ink">
                 {validationIssues.length === 0 ? 'OK — no issues' : `${validationIssues.length} issue(s)`}
@@ -266,12 +288,20 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
             : '💰 ~$0.00'}
         </button>
         {showEstimate && costEstimate && (
-          <Popover anchorRef={estimateBtnWrapRef} className="w-80 p-3">
+          <Popover anchorRef={estimateBtnWrapRef} className="w-80 p-3" onClose={() => setShowEstimate(false)}>
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="font-mono-data text-xs font-bold text-ink">Ước tính chi phí</span>
               <PopoverCloseButton onClick={() => setShowEstimate(false)} />
             </div>
-            <ul className="flex max-h-60 flex-col gap-1 overflow-y-auto">
+            {/* SPEC-step31.md §F5 — was `max-h-60` (240px): on a 10-node
+                workflow the last partly-visible row's text got clipped mid-
+                word right where the "Tổng" footer line began, reading as a
+                broken/overlapping layout rather than a scrollable list (no
+                visible scrollbar affordance either). `50vh` gives enough
+                headroom to show most workflows without scrolling at all,
+                while the footer below stays a normal sibling outside this
+                `overflow-y-auto` box (fixed, not part of the scroll area). */}
+            <ul className="flex max-h-[50vh] flex-col gap-1 overflow-y-auto">
               {costEstimate.nodes.map((n) => (
                 <li key={n.nodeId} className="flex items-start justify-between gap-2 text-xs">
                   <span className="text-ink-soft">
@@ -312,8 +342,10 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
         onClick={() => void handleRunForceAll()}
         disabled={isRunning}
         title="Chạy lại toàn bộ node, bỏ qua cache"
+        aria-label="Chạy lại toàn bộ node, bỏ qua cache"
       >
-        Run ⚡ bỏ cache
+        <span aria-hidden="true">⚡</span>
+        <span className="hidden 2xl:inline">Run bỏ cache</span>
       </Button>
 
       <ToolbarDivider />
@@ -324,8 +356,10 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
         data-testid="auto-layout-btn"
         onClick={handleAutoLayout}
         title="Tự động sắp xếp lại vị trí node (không chồng nhau)"
+        aria-label="Tự động sắp xếp lại vị trí node (không chồng nhau)"
       >
-        🪄 Sắp xếp
+        <span aria-hidden="true">🪄</span>
+        <span className="hidden 2xl:inline">Sắp xếp</span>
       </Button>
       <Button
         type="button"
@@ -333,9 +367,11 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
         variant={showNodePreviews ? 'primary' : 'secondary'}
         onClick={toggleNodePreviews}
         title="Bật/tắt preview trên tất cả node"
+        aria-label="Bật/tắt preview trên tất cả node"
         aria-pressed={showNodePreviews}
       >
-        👁 Preview
+        <span aria-hidden="true">👁</span>
+        <span className="hidden 2xl:inline">Preview</span>
       </Button>
 
       <ToolbarDivider />
@@ -355,14 +391,15 @@ export function Toolbar({ onOpenJsonView, onOpenSettings }: ToolbarProps) {
       <ToolbarDivider />
 
       {/* Group 7: {} JSON */}
-      <Button type="button" data-testid="json-view-btn" onClick={onOpenJsonView}>
-        {'{} JSON'}
+      <Button type="button" data-testid="json-view-btn" onClick={onOpenJsonView} title="JSON" aria-label="JSON">
+        <span aria-hidden="true">{'{}'}</span>
+        <span className="hidden 2xl:inline">JSON</span>
       </Button>
 
       <div className="min-w-2 flex-1" />
 
-      {/* ⚙ Settings */}
-      <Button type="button" data-testid="settings-btn" onClick={onOpenSettings} title="Settings">
+      {/* ⚙ Settings — always icon-only at every width, unlike the group above. */}
+      <Button type="button" data-testid="settings-btn" onClick={onOpenSettings} title="Settings" aria-label="Settings">
         ⚙
       </Button>
     </header>

@@ -21,17 +21,22 @@
  * request) sends an op meant for workflow A to whatever workflow happens to
  * be current by the time the entry actually fires. Every entry now carries
  * its own `workflowId`, captured at the moment the user acted (schedule time
- * for the two debounced mutators, call time for the four immediate ones —
+ * for the two debounced mutators, call time for the five immediate ones —
  * see `store/flow.ts`'s call sites), and `processEntry`/`handleConflict`
  * refuse to send (or act on a conflict for) an entry whose captured
  * `workflowId` no longer matches the live canvas.
  *
- * Deliberately NOT used by JSON-view edits, workflow rename, or `autoLayout()`
- * (SPEC-step27.md §4 "hạn chế ghi nhận có chủ đích" / §3 scope) — those keep
- * the pre-existing PUT `saveWorkflow()` path. `autoLayout()` in particular
- * also runs automatically after every AI turn (store/chat.ts's `onMessage`)
- * as a coarse re-layout nudge — logging it here as a "user" change would
- * mislabel an AI-turn side effect as a manual edit.
+ * Deliberately NOT used by JSON-view edits or workflow rename (SPEC-step27.md
+ * §4 "hạn chế ghi nhận có chủ đích" / §3 scope) — those keep the pre-existing
+ * PUT `saveWorkflow()` path.
+ *
+ * `autoLayout()` (SPEC-step16.md §3) is a partial exception, resolved in
+ * SPEC-step31.md F7: the Toolbar's manual "🪄 Sắp xếp" click (its `opts.log`
+ * default) DOES batch every moved node into one `move-node` entry here, same
+ * as a drag. `store/chat.ts`'s OTHER call to `autoLayout()` — the automatic
+ * coarse re-layout that runs after every AI turn's `onMessage` — passes
+ * `{ log: false }` and keeps the old `dirty: true` fallback instead: logging
+ * that one here would mislabel an AI-turn side effect as a manual edit.
  */
 import { applyPatch, PatchError } from 'shared';
 import * as api from '../api/client.ts';
