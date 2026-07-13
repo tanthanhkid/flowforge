@@ -58,7 +58,7 @@ packages/shared/  # domain PatchOp (applyPatch, PatchOpSchema...) dùng chung FE
 e2e/             # Playwright: free tier (mặc định, 0 đồng) + real tier (E2E_REAL=1)
 samples/         # 11 workflow mẫu + assets (seed: pnpm --filter server seed)
 data/artifacts/  # media outputs + uploads/ (gitignored)
-docs/            # spec từng bước (orchestrator viết): SPEC-step1..28 + DESIGN-ai-native.md (PHẦN 0 = sai lệch ship-vs-design + nợ đã biết)
+docs/            # spec từng bước (orchestrator viết): SPEC-step1..30 + DESIGN-ai-native.md (PHẦN 0 = sai lệch ship-vs-design + nợ đã biết)
 ```
 
 ## Thứ tự thực hiện & checkpoint

@@ -35,8 +35,13 @@ chat + canvas luôn cùng khung nhìn, và mọi thay đổi chỉnh tay đều 
   history đầy đủ (SQLite + `data/artifacts/`)
 - ⚡ **Cache**: hash(node + params + inputs) — re-run không gọi lại API;
   force re-run per node hoặc toàn bộ
-- 🛡️ Guard chống đốt tiền oan: model text-to-video + ảnh nối vào → chặn
-  trước khi submit kèm gợi ý bản image-to-video cùng họ
+- 🤖 **AI thấy kết quả run**: tóm tắt run gần nhất (trạng thái từng node,
+  cache, model, lỗi) được đưa vào context mỗi lượt chat — hỏi "vì sao node
+  lỗi?" là AI trả lời đúng chi tiết run của workflow đang mở
+- 🛡️ Guard chống đốt tiền oan (cả video lẫn ảnh): model text-to-video/
+  text-to-image mà có ảnh nối vào → chặn trước khi submit kèm gợi ý model
+  image-to-video / image-to-image cùng họ; agent cũng được dạy quy tắc chọn
+  model theo dữ liệu vào (tag `[i2i]`/`[t2i]` trong catalog)
 
 ## Yêu cầu
 
@@ -85,7 +90,7 @@ sửa). Tab **Lịch sử** (panel phải) xem ai đổi gì, bấm ↺ để kh
 ## Test
 
 ```bash
-pnpm -r test                 # unit: 413 server + 20 shared + 320 web
+pnpm -r test                 # unit: 441 server + 20 shared + 320 web
 pnpm run e2e                 # Playwright free tier: 27 test, 0 chi phí API
                              #   (5 test luồng chat chạy qua mock OpenRouter nội bộ)
 pnpm run e2e:real            # 3 test gọi API thật (~$0.01–0.05/lần) — chạy chủ động
@@ -116,7 +121,7 @@ rebuild prompt 1 lần) + `changeDigest.ts` (nén change log vào context).
 (`applyPatch`, `PatchOpSchema`) nằm ở `packages/shared`, dùng chung
 server/web (web apply optimistic từng op để animate). Node đăng ký qua
 NodeRegistry (`apps/server/src/nodes` — thêm node = thêm 1 file). Chi tiết:
-`docs/DESIGN-ai-native.md` + `docs/SPEC-step1.md` → `docs/SPEC-step28.md`.
+`docs/DESIGN-ai-native.md` + `docs/SPEC-step1.md` → `docs/SPEC-step30.md`.
 
 ```
 apps/server/src/{engine,nodes,agent,catalog,routes,db}
@@ -125,7 +130,7 @@ packages/shared/    # domain PatchOp dùng chung FE/BE (export TS source, không
 e2e/                # Playwright free tier (mock OpenRouter) + real tier gated
 samples/            # 11 workflow mẫu + assets
 data/artifacts/     # media outputs + uploads (gitignored)
-docs/               # DESIGN-ai-native.md + SPEC-step1..28
+docs/               # DESIGN-ai-native.md + SPEC-step1..30
 ```
 
 ## Node types (13)
@@ -134,7 +139,7 @@ docs/               # DESIGN-ai-native.md + SPEC-step1..28
 | --- | --- | --- |
 | `llm.generate` | LLM | OpenRouter, prompt (+context) → text; model chọn từ catalog hoặc tự nhập |
 | `llm.transform` | LLM | biến đổi text theo instruction |
-| `fal.image` | fal.ai | model id tự do/catalog, prompt (+image) → image |
+| `fal.image` | fal.ai | model id tự do/catalog, prompt (+image) → image; guard t2i-vs-i2i khi có ảnh |
 | `fal.video` | fal.ai | prompt (+image) → video; guard t2v-vs-i2v khi có ảnh |
 | `vbee.tts` | Vbee | text → audio (voice_code, speed, format) |
 | `video.compose` | ffmpeg | ghép ≤3 video + audio → mp4 hoàn chỉnh (local, free) |

@@ -14,6 +14,8 @@
 
 Lộ trình đã **ship xong toàn bộ** (project steps 20–28, commits `48a6fa8` → `0e0eec5`). Phần I/II bên dưới giữ nguyên làm tài liệu thiết kế gốc; các điểm sau là **sai lệch giữa thiết kế và bản ship** — khi mâu thuẫn, THỰC TẾ SHIP (mục này + code) thắng:
 
+> Hậu lộ trình (cùng ngày 2026-07-13, ngoài phạm vi thiết kế này nhưng bồi thêm cho tầng AI): step 29 — guard i2i `fal.image` + dạy agent chọn model theo dữ liệu vào (`docs/SPEC-step29.md`); step 30 — tóm tắt run gần nhất vào system prompt chat để AI trả lời được về kết quả chạy (`docs/SPEC-step30.md`).
+
 **Lệch có chủ đích (đã ghi trong spec tương ứng):**
 1. **Thứ tự lộ trình đảo**: `packages/shared` (mục 8 của kế hoạch §8 Phần I) được đôn lên chạy TRƯỚC animation (mục 6) và auto-log (mục 7) — vì cả hai bước sau đều cần `applyPatch` phía client. Mapping thực tế: step 25 = shared, step 26 = animation, step 27 = auto-log (xem CLAUDE.md).
 2. **KHÔNG có nút "Bỏ qua animation"** (Phần I §6 + rủi ro #2): server đã cap tổng pacing ≤1.5s/turn nên không đáng thêm UI — quyết định tại SPEC-step26.md §3.
