@@ -17,6 +17,7 @@
  * (`workflows.saveVersioned`'s `expectedVersion`/`VersionConflictError`).
  */
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import type { ZodError } from 'zod';
 import { z } from 'zod';
 import { getEnv } from '../config.js';
@@ -27,6 +28,7 @@ import type { MessagesRepo } from '../db/messages.js';
 import { VersionConflictError, type WorkflowsRepo } from '../db/workflows.js';
 import type { NodeRegistry } from '../engine/registry.js';
 import { validateWorkflow, type ValidationIssue, type Workflow } from '../engine/schema.js';
+import type { NodeRunRecord, RunRecord } from '../engine/stores.js';
 import { chatCompletion, type ChatMessage } from '../nodes/providers/openrouter.js';
 import { buildChangeDigest } from './changeDigest.js';
 import { AgentValidationError, issuesToFeedback } from './generateWorkflow.js';
@@ -110,6 +112,16 @@ export interface ChatTurnDeps {
   changes: ChangesRepo;
   /** default: OPENROUTER_DEFAULT_MODEL, same as generateWorkflow/editNode. */
   model?: string;
+  /**
+   * SPEC-step30.md §2 — looks up the most recent run of a workflow (full
+   * node detail included), so the system prompt can tell the LLM what
+   * actually happened last time this workflow ran instead of leaving it
+   * "blind" (the real 2026-07-13 "sao ảnh kết quả không liên quan" session
+   * this fixes). Optional/additive: every pre-step30 caller/test that
+   * doesn't pass this just gets no run-summary block at all — see
+   * `buildChatSystemPrompt`'s own optional 4th param.
+   */
+  getLatestRun?: (workflowId: string) => { run: RunRecord; nodes: NodeRunRecord[] } | undefined;
   /** Threaded into EVERY `chatCompletion` call this turn makes. */
   signal?: AbortSignal;
   events?: ChatTurnEvents;
@@ -188,6 +200,169 @@ export function summarizeOps(ops: PatchOp[]): string {
   return `AI: ${parts.join(', ')}`;
 }
 
+/** SPEC-step30.md §3 — hard cap on the whole run-summary block (header +
+ * every node line combined), so it can't blow up the system prompt for a
+ * workflow with many nodes. */
+const RUN_SUMMARY_CAP_CHARS = 1500;
+/** SPEC-step30.md §3 — an error message is truncated to this length
+ * (independently of the overall block cap above) before being embedded. */
+const RUN_SUMMARY_ERROR_TRUNCATE_CHARS = 200;
+
+function truncateWithEllipsis(text: string, maxLen: number): string {
+  return text.length > maxLen ? `${text.slice(0, maxLen)}…` : text;
+}
+
+/** `run.createdAt` is an epoch-ms timestamp (same clock as every other
+ * `*Repo`'s `now()`, e.g. `db/conversations.ts`) — rendered without
+ * milliseconds ("ISO ngắn" per SPEC-step30.md §3). */
+function toShortIso(epochMs: number): string {
+  return new Date(epochMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+/** Deterministic (given `nowMs`) Vietnamese relative-time phrase — the whole
+ * reason `buildRunSummary` takes `now` as an explicit ms timestamp instead of
+ * calling `Date.now()` itself: same rationale as every other clock-injected
+ * spot in this codebase (tests get a fixed, reproducible string). */
+function formatRelativeTime(nowMs: number, thenMs: number): string {
+  const deltaMs = Math.max(0, nowMs - thenMs);
+  const minuteMs = 60_000;
+  const hourMs = 60 * minuteMs;
+  const dayMs = 24 * hourMs;
+
+  if (deltaMs < minuteMs) return 'vừa xong';
+  if (deltaMs < hourMs) return `${Math.floor(deltaMs / minuteMs)} phút trước`;
+  if (deltaMs < dayMs) return `${Math.floor(deltaMs / hourMs)} giờ trước`;
+  return `${Math.floor(deltaMs / dayMs)} ngày trước`;
+}
+
+/** A `MediaValue` (engine/types.ts) — duck-typed here rather than imported,
+ * since `PortValue`/node outputs are typed `unknown` all the way down to
+ * `NodeRunRecord.outputs` and this module has no other reason to depend on
+ * `engine/types.ts`. */
+function isMediaValue(value: unknown): value is { kind: string; path?: string; url?: string } {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    typeof (value as { kind?: unknown }).kind === 'string' &&
+    ['image', 'video', 'audio'].includes((value as { kind: string }).kind)
+  );
+}
+
+/**
+ * One output port's contribution to a node line: `<port>=<kind>:<file>` for
+ * media outputs (basename only — SPEC-step30.md §3 explicitly says NOT to
+ * embed the full path/URL/content), `<port>=<kind>` for everything else
+ * (never the actual text/number/json content itself, same "no content"
+ * rule).
+ */
+function describeOutputValue(portName: string, value: unknown): string {
+  if (isMediaValue(value)) {
+    const file = value.path ? path.basename(value.path) : value.url ? '(url)' : '(không có file)';
+    return `${portName}=${value.kind}:${file}`;
+  }
+  if (typeof value === 'string') return `${portName}=text`;
+  if (typeof value === 'number') return `${portName}=number`;
+  if (typeof value === 'boolean') return `${portName}=boolean`;
+  return `${portName}=json`;
+}
+
+function buildRunSummaryNodeLine(
+  node: NodeRunRecord,
+  nodeTypeById: Map<string, string>,
+  nodeParamsById: Map<string, Record<string, unknown>>,
+): string {
+  const nodeType = nodeTypeById.get(node.nodeId) ?? '?';
+
+  const tags = [node.state as string];
+  if (node.cacheHit) tags.push('cache');
+  const modelId = nodeParamsById.get(node.nodeId)?.modelId;
+  if (typeof modelId === 'string' && modelId.length > 0) tags.push(`model ${modelId}`);
+
+  let line = `- ${node.nodeId} (${nodeType}): ${tags.join(', ')}`;
+
+  if (node.state === 'error' && node.error) {
+    line += ` — lỗi: ${truncateWithEllipsis(node.error, RUN_SUMMARY_ERROR_TRUNCATE_CHARS)}`;
+  } else if (node.state === 'success' && node.outputs && Object.keys(node.outputs).length > 0) {
+    const outputParts = Object.entries(node.outputs).map(([port, value]) => describeOutputValue(port, value));
+    line += ` — output: ${outputParts.join(', ')}`;
+  }
+
+  return line;
+}
+
+/**
+ * SPEC-step30.md §3 — pure (no I/O, no clock read — `nowMs` is an explicit
+ * param) so it's directly unit-testable and reused by every rebuild inside
+ * `runChatTurn` below. Renders:
+ *   Run <8-char id> — <status>, <relative time> (bắt đầu <short ISO>)
+ *   - <nodeId> (<type>): <state>[, cache][, model <id>][ — lỗi: ...|— output: ...]
+ *   ...
+ * `run.workflowJson` (the exact snapshot the engine ran against — always
+ * present on a `RunRecord`) is where node `type`/`params.modelId` come from;
+ * a node id present in `nodes` but missing from that snapshot (shouldn't
+ * happen, but JSON is JSON) just falls back to `'?'` for its type / no model
+ * tag, rather than throwing.
+ *
+ * The whole block is capped to `RUN_SUMMARY_CAP_CHARS`: every `state:
+ * 'error'` node line is ALWAYS kept (even if that alone blows the cap —
+ * errors are exactly what the user is most likely asking about), while
+ * non-error node lines are dropped (in original order, best-effort — a line
+ * that doesn't fit is skipped rather than aborting the whole packing, so a
+ * later shorter line still gets a chance) to make room. Error lines' total
+ * length is reserved out of the budget UP FRONT (before any success line is
+ * considered), regardless of where in `nodes` the error node sits — a
+ * forward-only pass that only checked the cap on success lines and added
+ * error lines unconditionally could let error lines that come AFTER a run
+ * of success lines push the total past the cap.
+ */
+export function buildRunSummary(run: RunRecord, nodes: NodeRunRecord[], nowMs: number): string {
+  const nodeTypeById = new Map<string, string>();
+  const nodeParamsById = new Map<string, Record<string, unknown>>();
+  try {
+    const workflow = JSON.parse(run.workflowJson) as Workflow;
+    for (const node of workflow.nodes ?? []) {
+      nodeTypeById.set(node.id, node.type);
+      nodeParamsById.set(node.id, (node.params ?? {}) as Record<string, unknown>);
+    }
+  } catch {
+    // workflowJson malformed/unavailable — every node line below just falls
+    // back to '?' for its type and no model tag, instead of throwing.
+  }
+
+  const header = `Run ${run.id.slice(0, 8)} — ${run.status}, ${formatRelativeTime(nowMs, run.createdAt)} (bắt đầu ${toShortIso(run.createdAt)})`;
+  const nodeLines = nodes.map((node) => buildRunSummaryNodeLine(node, nodeTypeById, nodeParamsById));
+
+  // Reserve the error lines' length FIRST (they're always kept in full, no
+  // matter how big), then only fill whatever budget remains with success
+  // lines — this way success lines packed before an error line in `nodes`
+  // can never push the total past the cap once the (mandatory) error line
+  // is added in.
+  let reservedLen = header.length;
+  nodes.forEach((node, i) => {
+    if (node.state === 'error') reservedLen += 1 + nodeLines[i]!.length; // +1 for the joining '\n'
+  });
+
+  const keptIndices = new Set<number>();
+  let currentLen = reservedLen;
+  nodes.forEach((node, i) => {
+    if (node.state === 'error') {
+      keptIndices.add(i);
+      return;
+    }
+    const additionalLen = 1 + nodeLines[i]!.length; // +1 for the joining '\n'
+    if (currentLen + additionalLen <= RUN_SUMMARY_CAP_CHARS) {
+      keptIndices.add(i);
+      currentLen += additionalLen;
+    }
+  });
+
+  // Output preserves the original `nodes` order (error lines are not hoisted
+  // to the top) — only which success lines survive the cap changes.
+  const kept = nodeLines.filter((_, i) => keptIndices.has(i));
+
+  return [header, ...kept].join('\n');
+}
+
 export async function runChatTurn(
   conversationId: string,
   content: string,
@@ -231,11 +406,30 @@ export async function runChatTurn(
     return { maxSeenId, digest: buildChangeDigest(unseen) };
   }
 
+  const now = deps.now ?? Date.now;
+
+  /**
+   * SPEC-step30.md §3 — `undefined` when there's no `getLatestRun` dep at
+   * all (pre-step30 callers/tests, additive) OR that workflow has never
+   * been run yet; either way `buildChatSystemPrompt`'s 4th param is likewise
+   * `undefined` and the whole "Run gần nhất" block is omitted, byte-for-byte
+   * identical to before this step.
+   */
+  function computeRunSummary(): string | undefined {
+    const found = deps.getLatestRun?.(conversation!.workflowId);
+    if (!found) return undefined;
+    return buildRunSummary(found.run, found.nodes, now());
+  }
+
   let { maxSeenId, digest } = computeDigestContext();
 
   deps.events?.onThinking?.('Đang phân tích yêu cầu…');
 
-  let messages = buildLlmMessages(buildChatSystemPrompt(deps.registry, wf0, digest), priorMessages, content);
+  let messages = buildLlmMessages(
+    buildChatSystemPrompt(deps.registry, wf0, digest, computeRunSummary()),
+    priorMessages,
+    content,
+  );
 
   /**
    * Handles a detected version conflict (workflow.version at read-time !=
@@ -254,7 +448,11 @@ export async function runChatTurn(
       wf0 = latestWorkflow;
       v0 = latestVersion;
       ({ maxSeenId, digest } = computeDigestContext());
-      messages = buildLlmMessages(buildChatSystemPrompt(deps.registry, wf0, digest), priorMessages, content);
+      messages = buildLlmMessages(
+        buildChatSystemPrompt(deps.registry, wf0, digest, computeRunSummary()),
+        priorMessages,
+        content,
+      );
       // SPEC-step21.md §4.5.b: rebuilding re-runs "bước 3-4", and bước 4 ends
       // with onThinking — re-emit it so an SSE consumer sees a fresh
       // "đang phân tích" signal for the 2nd LLM call this rebuild triggers.

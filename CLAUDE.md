@@ -101,9 +101,9 @@ docs/            # spec từng bước (orchestrator viết): SPEC-step1..28 + D
 **LỘ TRÌNH AI-NATIVE HOÀN TẤT 2026-07-13** (9 bước, mỗi bước: Sonnet implement → 2 reviewer Opus → Sonnet verify → fix → orchestrator nghiệm thu; smoke thật cuối: 1 turn chat grok-4.5 chạy sống đủ thinking→patch-op→message→done).
 
 29. ✅ Guard i2i cho `fal.image` + dạy agent chọn model theo dữ liệu vào (từ bug thật session user 2026-07-13: AI chọn flux/dev t2i cho node có ảnh → đốt tiền vô ích): catalog thêm `imageKind` t2i/i2i (fal API chỉ có đúng 2 category ảnh; 12 preset đều t2i), guard chặn trước khi tốn credit + gợi ý model i2i từ live, khối "QUY TẮC CHỌN MODEL THEO DỮ LIỆU VÀO" + tag `[i2i]`/`[t2i]` trong system prompt, fix sample-stock-restyle (flux/dev → flux-pro/kontext) + regression test quét mọi sample — spec: `docs/SPEC-step29.md`
-30. ⬜ AI nhìn thấy kết quả run (run summary vào context chatTurn) — spec: `docs/SPEC-step30.md`
+30. ✅ AI nhìn thấy kết quả run: `buildRunSummary` (header + từng node state/cache/model/error cắt 200/output basename, cap 1500 ký tự reserve-error-first) vào system prompt chat qua dep optional `getLatestRun` (`SqliteRunStore.latestRunForWorkflow`), rebuild version-conflict cũng refresh; smoke thật: AI trả lời đúng chi tiết run của conversation ly cà phê — spec: `docs/SPEC-step30.md`
 
-Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 430 server + 20 shared + 320 web + 27 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên. Backlog UX từ session 2026-07-13: đính kèm ảnh trong composer, CTA/diff chip trên bubble, summary change giàu thông tin, AI đặt tên workflow, badge i2i/t2i trong ModelPicker.
+Hiện trạng: **13 node types, catalog live ~1.240 model (576 ảnh + 319 video fal + 345 LLM) + 48 preset ⭐, 11 samples, 441 server + 20 shared + 320 web + 27 e2e tests.** Việc sau này: tính năng mới theo yêu cầu user, vẫn theo luật orchestration ở trên. Backlog UX từ session 2026-07-13: đính kèm ảnh trong composer, CTA/diff chip trên bubble, summary change giàu thông tin, AI đặt tên workflow, badge i2i/t2i trong ModelPicker.
 
 **Sau mỗi bước chạy được: dừng lại, tóm tắt, hỏi user trước khi sang bước tiếp theo.**
 

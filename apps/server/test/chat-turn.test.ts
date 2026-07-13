@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AgentValidationError } from '../src/agent/generateWorkflow.js';
 import { applyPatch } from '../src/agent/patch.js';
 import {
+  buildRunSummary,
   ChatTurnAbortedError,
   ConversationNotFoundError,
   runChatTurn,
@@ -19,6 +20,7 @@ import { MessagesRepo } from '../src/db/messages.js';
 import { openDb } from '../src/db/sqlite.js';
 import { WorkflowsRepo } from '../src/db/workflows.js';
 import { emptyWorkflow } from '../src/engine/schema.js';
+import type { NodeRunRecord, RunRecord } from '../src/engine/stores.js';
 import { createDefaultRegistry } from '../src/nodes/index.js';
 
 function jsonResponse(status: number, body: unknown): Response {
@@ -63,7 +65,11 @@ describe('runChatTurn', () => {
     conversations = new ConversationsRepo(db, () => clock);
     messages = new MessagesRepo(db, () => clock);
     changes = new ChangesRepo(db, () => clock);
-    deps = { registry: createDefaultRegistry(), workflows, conversations, messages, changes };
+    // SPEC-step30.md §3 now actually reads `deps.now` (previously accepted
+    // but unused) for the run-summary's relative-time text — injecting it
+    // here keeps every test in this file deterministic instead of at the
+    // mercy of the real wall clock.
+    deps = { registry: createDefaultRegistry(), workflows, conversations, messages, changes, now: () => clock };
   });
 
   afterEach(() => {
@@ -394,5 +400,259 @@ describe('runChatTurn', () => {
     const assistantMsg = messages.listByConversation('c1').find((m) => m.role === 'assistant')!;
     expect(assistantMsg.status).toBe('error');
     expect(assistantMsg.error).toBeTruthy();
+  });
+
+  describe('run summary in the system prompt (SPEC-step30.md §4.2)', () => {
+    const fixedRun: RunRecord = {
+      id: 'run-0001-abcdef',
+      workflowId: 'wf-1',
+      workflowJson: JSON.stringify(emptyWorkflow('wf-1', '')),
+      status: 'success',
+      createdAt: 500,
+    };
+    const fixedNodes: NodeRunRecord[] = [
+      { runId: fixedRun.id, nodeId: 'gen', state: 'success', logs: [], cacheHit: false },
+    ];
+
+    it('getLatestRun returning a run -> system prompt contains the "Run gần nhất" block built by buildRunSummary', async () => {
+      setupConversation();
+      const getLatestRun = vi.fn(() => ({ run: fixedRun, nodes: fixedNodes }));
+      const fetchMock = vi.fn(async () => chatResponse(JSON.stringify({ reply: 'ok', ops: [] })));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await runChatTurn('c1', 'sao ảnh kết quả không liên quan?', { ...deps, getLatestRun });
+
+      expect(getLatestRun).toHaveBeenCalledWith('wf-1');
+      const systemContent = requestBodyOf(fetchMock, 0).messages[0]!.content;
+      expect(systemContent).toContain('## Run gần nhất của workflow này');
+      expect(systemContent).toContain(buildRunSummary(fixedRun, fixedNodes, clock));
+      expect(systemContent).toContain('Dùng thông tin này khi người dùng hỏi về kết quả/lỗi của lần chạy.');
+    });
+
+    it('no getLatestRun dep at all -> system prompt has no "Run gần nhất" block', async () => {
+      setupConversation();
+      const fetchMock = vi.fn(async () => chatResponse(JSON.stringify({ reply: 'ok', ops: [] })));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await runChatTurn('c1', 'hi', deps); // deps (outer beforeEach) never sets getLatestRun
+
+      const systemContent = requestBodyOf(fetchMock, 0).messages[0]!.content;
+      expect(systemContent).not.toContain('## Run gần nhất của workflow này');
+    });
+
+    it('getLatestRun dep present but returns undefined (workflow never run) -> no "Run gần nhất" block', async () => {
+      setupConversation();
+      const getLatestRun = vi.fn(() => undefined);
+      const fetchMock = vi.fn(async () => chatResponse(JSON.stringify({ reply: 'ok', ops: [] })));
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await runChatTurn('c1', 'hi', { ...deps, getLatestRun });
+
+      expect(getLatestRun).toHaveBeenCalledWith('wf-1');
+      const systemContent = requestBodyOf(fetchMock, 0).messages[0]!.content;
+      expect(systemContent).not.toContain('## Run gần nhất của workflow này');
+    });
+
+    it('a version-conflict rebuild calls getLatestRun again and the 2nd (rebuilt) system prompt still has the block', async () => {
+      setupConversation();
+      const getLatestRun = vi.fn(() => ({ run: fixedRun, nodes: fixedNodes }));
+      const aiOps = [{ op: 'add-node', node: { id: 'ai-node', type: 'input.text', params: {} } }];
+      let callCount = 0;
+
+      const fetchMock = vi.fn(async () => {
+        callCount++;
+        if (callCount === 1) {
+          const manual = applyPatch(workflows.get('wf-1')!, [
+            { op: 'add-node', node: { id: 'manual-node', type: 'input.text', params: {} } },
+          ]);
+          workflows.saveVersioned(manual, workflows.getVersion('wf-1'));
+        }
+        return chatResponse(JSON.stringify({ reply: 'ok', ops: aiOps }));
+      });
+      globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+      await runChatTurn('c1', 'thêm 1 node input.text', { ...deps, getLatestRun });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(getLatestRun).toHaveBeenCalledTimes(2);
+      const secondSystemContent = requestBodyOf(fetchMock, 1).messages[0]!.content;
+      expect(secondSystemContent).toContain('## Run gần nhất của workflow này');
+    });
+  });
+});
+
+describe('buildRunSummary (SPEC-step30.md §3)', () => {
+  function run(overrides: Partial<RunRecord> = {}): RunRecord {
+    return {
+      id: 'abcd1234-rest-of-the-uuid',
+      workflowId: 'wf-1',
+      workflowJson: JSON.stringify({ version: 1, id: 'wf-1', name: '', nodes: [], edges: [] }),
+      status: 'success',
+      createdAt: 1_000_000,
+      ...overrides,
+    };
+  }
+
+  function shortIso(epochMs: number): string {
+    return new Date(epochMs).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  }
+
+  it('formats the header (short id, status, relative time via `now`, short ISO start) and per-node lines (cache/model shown)', () => {
+    const r = run({
+      workflowJson: JSON.stringify({
+        version: 1,
+        id: 'wf-1',
+        name: '',
+        nodes: [
+          { id: 'gen', type: 'fal.image', params: { modelId: 'fal-ai/flux/dev' } },
+          { id: 'cap', type: 'llm.generate', params: {} },
+        ],
+        edges: [],
+      }),
+    });
+    const nodes: NodeRunRecord[] = [
+      {
+        runId: r.id,
+        nodeId: 'gen',
+        state: 'success',
+        outputs: { image: { kind: 'image', path: 'data/artifacts/a1b2c3.png', mime: 'image/png' } },
+        logs: [],
+        cacheHit: true,
+        startedAt: 900_000,
+        finishedAt: 950_000,
+      },
+      {
+        runId: r.id,
+        nodeId: 'cap',
+        state: 'success',
+        outputs: { text: 'một đoạn caption khá dài không nên bị nhét thẳng vào summary' },
+        logs: [],
+        cacheHit: false,
+      },
+    ];
+
+    const now = r.createdAt + 65_000; // 65s later
+    const summary = buildRunSummary(r, nodes, now);
+    const lines = summary.split('\n');
+
+    expect(lines[0]).toBe(`Run ${r.id.slice(0, 8)} — success, 1 phút trước (bắt đầu ${shortIso(r.createdAt)})`);
+    expect(lines).toContain('- gen (fal.image): success, cache, model fal-ai/flux/dev — output: image=image:a1b2c3.png');
+    expect(lines).toContain('- cap (llm.generate): success — output: text=text');
+    // the full text content of a text output is never embedded verbatim.
+    expect(summary).not.toContain('một đoạn caption khá dài');
+  });
+
+  it('falls back to "vừa xong" at now == createdAt, and node type "?" when the node id is missing from workflowJson', () => {
+    const r = run();
+    const nodes: NodeRunRecord[] = [{ runId: r.id, nodeId: 'ghost', state: 'success', logs: [], cacheHit: false }];
+    const summary = buildRunSummary(r, nodes, r.createdAt);
+    expect(summary).toContain('vừa xong');
+    expect(summary).toContain('- ghost (?): success');
+  });
+
+  it('truncates a node error to 200 chars and keeps that error line even when other lines are dropped to respect the 1500-char cap', () => {
+    const longError = 'x'.repeat(300);
+    const r = run({
+      status: 'error',
+      workflowJson: JSON.stringify({
+        version: 1,
+        id: 'wf-1',
+        name: '',
+        nodes: [
+          { id: 'bad', type: 'fal.video', params: { modelId: 'fal-ai/kling' } },
+          ...Array.from({ length: 30 }, (_, i) => ({ id: `ok-${i}`, type: 'fal.image', params: {} })),
+        ],
+        edges: [],
+      }),
+    });
+    const nodes: NodeRunRecord[] = [
+      { runId: r.id, nodeId: 'bad', state: 'error', error: longError, logs: [], cacheHit: false },
+      ...Array.from({ length: 30 }, (_, i) => ({
+        runId: r.id,
+        nodeId: `ok-${i}`,
+        state: 'success' as const,
+        outputs: { image: { kind: 'image', path: `data/artifacts/very-long-output-filename-${i}.png` } },
+        logs: [],
+        cacheHit: false,
+      })),
+    ];
+
+    const summary = buildRunSummary(r, nodes, r.createdAt);
+
+    expect(summary.length).toBeLessThanOrEqual(1500);
+    expect(summary).toContain(`— lỗi: ${'x'.repeat(200)}…`);
+    expect(summary).not.toContain('x'.repeat(201));
+    // 31 node lines total (1 error + 30 success) would blow well past 1500
+    // chars — some success lines must have been dropped to make room.
+    expect(summary.split('\n').length).toBeLessThan(1 + 31);
+  });
+
+  it('respects the 1500-char cap and still keeps the full error line when the error node comes AFTER a run of success lines that nearly fill the budget', () => {
+    // Regression for a bug where success lines were packed up to (near) the
+    // cap first, then the error line was appended UNCONDITIONALLY on top —
+    // blowing well past RUN_SUMMARY_CAP_CHARS whenever the error node wasn't
+    // first in `nodes`. Mirrors the finding's repro: ~20 success nodes with
+    // long output paths, THEN a single error node at the very end.
+    const longError = 'y'.repeat(300);
+    const r = run({
+      status: 'error',
+      workflowJson: JSON.stringify({
+        version: 1,
+        id: 'wf-1',
+        name: '',
+        nodes: [
+          ...Array.from({ length: 20 }, (_, i) => ({ id: `ok-${i}`, type: 'fal.image', params: {} })),
+          { id: 'bad-final', type: 'fal.video', params: { modelId: 'fal-ai/kling' } },
+        ],
+        edges: [],
+      }),
+    });
+    const nodes: NodeRunRecord[] = [
+      ...Array.from({ length: 20 }, (_, i) => ({
+        runId: r.id,
+        nodeId: `ok-${i}`,
+        state: 'success' as const,
+        outputs: { image: { kind: 'image', path: `data/artifacts/very-long-output-filename-number-${i}.png` } },
+        logs: [],
+        cacheHit: false,
+      })),
+      { runId: r.id, nodeId: 'bad-final', state: 'error', error: longError, logs: [], cacheHit: false },
+    ];
+
+    const summary = buildRunSummary(r, nodes, r.createdAt);
+
+    expect(summary.length).toBeLessThanOrEqual(1500);
+    expect(summary).toContain(`— lỗi: ${'y'.repeat(200)}…`);
+    // the error line for the LAST node must still be present even though
+    // some earlier success lines had to be dropped to make room for it.
+    expect(summary).toContain('- bad-final (fal.video)');
+    // some success lines were necessarily dropped to keep the error line in
+    // full while respecting the cap.
+    expect(summary.split('\n').length).toBeLessThan(1 + 21);
+  });
+
+  it('caps the whole block to 1500 chars even with only success nodes (no error to keep)', () => {
+    const r = run({
+      workflowJson: JSON.stringify({
+        version: 1,
+        id: 'wf-1',
+        name: '',
+        nodes: Array.from({ length: 50 }, (_, i) => ({ id: `ok-${i}`, type: 'fal.image', params: {} })),
+        edges: [],
+      }),
+    });
+    const nodes: NodeRunRecord[] = Array.from({ length: 50 }, (_, i) => ({
+      runId: r.id,
+      nodeId: `ok-${i}`,
+      state: 'success' as const,
+      outputs: { image: { kind: 'image', path: `data/artifacts/very-long-output-filename-number-${i}.png` } },
+      logs: [],
+      cacheHit: false,
+    }));
+
+    const summary = buildRunSummary(r, nodes, r.createdAt);
+
+    expect(summary.length).toBeLessThanOrEqual(1500);
+    expect(summary.split('\n').length).toBeLessThan(1 + 50);
   });
 });

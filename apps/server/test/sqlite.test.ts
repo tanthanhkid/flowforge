@@ -67,6 +67,32 @@ describe('SqliteRunStore', () => {
     expect(store.getRun('missing')).toBeUndefined();
     db.close();
   });
+
+  describe('latestRunForWorkflow (SPEC-step30.md §2)', () => {
+    it('returns the most recently created run for that workflow, full node detail included', () => {
+      const db = openDb(':memory:');
+      const store = new SqliteRunStore(db);
+
+      store.createRun({ id: 'run-old', workflowId: 'wf-1', workflowJson: '{}', status: 'success', createdAt: 100 });
+      store.createRun({ id: 'run-new', workflowId: 'wf-1', workflowJson: '{}', status: 'error', createdAt: 200 });
+      store.upsertNodeRun({ runId: 'run-new', nodeId: 'A', state: 'error', logs: [], cacheHit: false });
+      // a different workflow's run, newer still — must not "win" over wf-1's own latest.
+      store.createRun({ id: 'run-other-wf', workflowId: 'wf-2', workflowJson: '{}', status: 'success', createdAt: 300 });
+
+      const found = store.latestRunForWorkflow('wf-1');
+      expect(found?.run.id).toBe('run-new');
+      expect(found?.nodes.map((n) => n.nodeId)).toEqual(['A']);
+
+      db.close();
+    });
+
+    it('returns undefined when the workflow has never been run', () => {
+      const db = openDb(':memory:');
+      const store = new SqliteRunStore(db);
+      expect(store.latestRunForWorkflow('never-run')).toBeUndefined();
+      db.close();
+    });
+  });
 });
 
 describe('SqliteCacheStore', () => {

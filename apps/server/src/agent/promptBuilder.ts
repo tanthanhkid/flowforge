@@ -515,8 +515,22 @@ Output mong đợi (CHỈ JSON object):
  * this turn hasn't seen yet (changeDigest.ts's `buildChangeDigest` —
  * `''` when there's nothing to report, in which case the whole digest block
  * is omitted).
+ *
+ * `runSummary` (SPEC-step30.md §3, additive 4th param — every pre-step30
+ * caller keeps compiling/behaving identically without passing it): a
+ * `chatTurn.ts`-built (`buildRunSummary`) plain-text summary of the
+ * workflow's most recent run, so the AI isn't "blind" to what actually
+ * happened when the user asks about a run's result/error (the real
+ * 2026-07-13 "sao ảnh kết quả không liên quan" session this fixes).
+ * `undefined` (the default) omits the whole block, byte-for-byte identical
+ * to the pre-step30 prompt.
  */
-export function buildChatSystemPrompt(registry: NodeRegistry, workflow: Workflow, digest: string): string {
+export function buildChatSystemPrompt(
+  registry: NodeRegistry,
+  workflow: Workflow,
+  digest: string,
+  runSummary?: string,
+): string {
   const nodeCatalogSection = buildNodeCatalogSection(registry);
   const workflowJson = JSON.stringify(workflow, null, 2);
 
@@ -530,6 +544,16 @@ export function buildChatSystemPrompt(registry: NodeRegistry, workflow: Workflow
           '',
         ];
 
+  const runSummaryBlock =
+    runSummary === undefined
+      ? []
+      : [
+          '## Run gần nhất của workflow này',
+          runSummary,
+          '(Dùng thông tin này khi người dùng hỏi về kết quả/lỗi của lần chạy.)',
+          '',
+        ];
+
   return [
     CHAT_ROLE,
     '',
@@ -539,6 +563,7 @@ export function buildChatSystemPrompt(registry: NodeRegistry, workflow: Workflow
     workflowJson,
     '',
     ...digestBlock,
+    ...runSummaryBlock,
     CHAT_PATCH_OPS_DESCRIPTION,
     '',
     CHAT_OUTPUT_CONTRACT,

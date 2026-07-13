@@ -23,6 +23,7 @@ import type { MessagesRepo } from './db/messages.js';
 import type { WorkflowsRepo } from './db/workflows.js';
 import type { NodeRegistry } from './engine/registry.js';
 import type { ValidationIssue, Workflow } from './engine/schema.js';
+import type { NodeRunRecord, RunRecord } from './engine/stores.js';
 import {
   ChatTurnAbortedError,
   ConversationNotFoundError,
@@ -58,6 +59,10 @@ export interface ChatTurnManagerDeps {
   changes: ChangesRepo;
   /** default: OPENROUTER_DEFAULT_MODEL, same as runChatTurn's own default. */
   model?: string;
+  /** SPEC-step30.md §2 — passed straight through to `runChatTurn`'s own dep
+   * of the same name; optional/additive, `undefined` (every pre-step30
+   * caller) means no run-summary block at all. */
+  getLatestRun?: (workflowId: string) => { run: RunRecord; nodes: NodeRunRecord[] } | undefined;
   /** Injectable for tests — production default below; tests pass `() => 0`
    * to make pacing instantaneous. */
   paceMs?: (total: number) => number;
@@ -167,6 +172,7 @@ export class ChatTurnManager {
       messages: this.deps.messages,
       changes: this.deps.changes,
       model: this.deps.model,
+      getLatestRun: this.deps.getLatestRun,
       signal: controller.signal,
       events,
     }).catch((err: unknown) => {

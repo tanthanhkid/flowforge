@@ -85,6 +85,11 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
     conversations: conversationsRepo,
     messages: messagesRepo,
     changes: changesRepo,
+    // SPEC-step30.md §2 — same `runStore` instance the engine/RunManager
+    // already write every run's node states to; `latestRunForWorkflow` is a
+    // read-only convenience method on the concrete `SqliteRunStore` (see its
+    // own doc comment for why it isn't on the `RunStore` interface).
+    getLatestRun: (workflowId) => runStore.latestRunForWorkflow(workflowId),
     paceMs: opts.chatTurnPaceMs,
   });
 

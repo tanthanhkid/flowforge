@@ -179,6 +179,25 @@ export class SqliteRunStore implements RunStore {
       })),
     };
   }
+
+  /**
+   * SPEC-step30.md §2 — the most recently CREATED run for a workflow (by
+   * `created_at`, `rowid` as tiebreaker for same-millisecond inserts — same
+   * ordering `routes/runs.ts`'s `GET /api/runs` already uses), full node
+   * detail included. A small method on the concrete class rather than a new
+   * `RunStore` interface member: `routes/runs.ts`'s own doc comment already
+   * established the precedent of querying the `runs` table directly instead
+   * of growing that interface for a single workflow-scoped read, and
+   * `InMemoryRunStore` (engine unit tests' mock-node double) has no
+   * `workflowId`-indexed lookup to mirror this with anyway.
+   */
+  latestRunForWorkflow(workflowId: string): { run: RunRecord; nodes: NodeRunRecord[] } | undefined {
+    const row = this.db
+      .prepare(`SELECT id FROM runs WHERE workflow_id = ? ORDER BY created_at DESC, rowid DESC LIMIT 1`)
+      .get(workflowId) as { id: string } | undefined;
+    if (!row) return undefined;
+    return this.getRun(row.id);
+  }
 }
 
 export class SqliteCacheStore implements CacheStore {
