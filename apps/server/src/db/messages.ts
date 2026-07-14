@@ -8,6 +8,15 @@ import type Database from 'better-sqlite3';
 export type MessageRole = 'user' | 'assistant';
 export type MessageStatus = 'pending' | 'streaming' | 'done' | 'error';
 
+/** SPEC-step32.md B1 — one image the user attached to a chat message, already
+ * uploaded via `POST /api/upload` (this only carries the resulting `path`
+ * plus display metadata, never the file bytes themselves). */
+export interface MessageAttachment {
+  path: string;
+  filename?: string;
+  mime?: string;
+}
+
 export interface Message {
   id: string;
   conversationId: string;
@@ -16,6 +25,9 @@ export interface Message {
   status: MessageStatus;
   error?: string;
   changeId?: number;
+  /** `undefined` when the message has no attachments (the common case) —
+   * never an empty array. */
+  attachments?: MessageAttachment[];
   createdAt: number;
 }
 
@@ -27,6 +39,7 @@ interface MessageRow {
   status: string;
   error: string | null;
   change_id: number | null;
+  attachments: string | null;
   created_at: number;
 }
 
@@ -39,6 +52,7 @@ function toMessage(row: MessageRow): Message {
     status: row.status as MessageStatus,
     error: row.error ?? undefined,
     changeId: row.change_id ?? undefined,
+    attachments: row.attachments ? (JSON.parse(row.attachments) as MessageAttachment[]) : undefined,
     createdAt: row.created_at,
   };
 }
@@ -56,12 +70,16 @@ export class MessagesRepo {
     content: string;
     status?: MessageStatus;
     changeId?: number;
+    /** SPEC-step32.md B1 — persisted verbatim (never the LLM-facing "[Đính
+     * kèm N ảnh...]" note, which `chatTurn.ts` synthesizes on the fly at
+     * prompt-build time instead of being stored here). */
+    attachments?: MessageAttachment[];
   }): Message {
     const createdAt = this.now();
     this.db
       .prepare(
-        `INSERT INTO messages (id, conversation_id, role, content, status, error, change_id, created_at)
-         VALUES (@id, @conversationId, @role, @content, @status, NULL, @changeId, @createdAt)`,
+        `INSERT INTO messages (id, conversation_id, role, content, status, error, change_id, attachments, created_at)
+         VALUES (@id, @conversationId, @role, @content, @status, NULL, @changeId, @attachments, @createdAt)`,
       )
       .run({
         id: input.id,
@@ -70,6 +88,8 @@ export class MessagesRepo {
         content: input.content,
         status: input.status ?? 'done',
         changeId: input.changeId ?? null,
+        attachments:
+          input.attachments && input.attachments.length > 0 ? JSON.stringify(input.attachments) : null,
         createdAt,
       });
     return this.get(input.id)!;

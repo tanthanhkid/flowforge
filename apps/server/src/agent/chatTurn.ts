@@ -23,14 +23,14 @@ import { z } from 'zod';
 import { getEnv } from '../config.js';
 import type { ChangesRepo } from '../db/changes.js';
 import type { ConversationsRepo } from '../db/conversations.js';
-import type { Message } from '../db/messages.js';
+import type { Message, MessageAttachment } from '../db/messages.js';
 import type { MessagesRepo } from '../db/messages.js';
 import { VersionConflictError, type WorkflowsRepo } from '../db/workflows.js';
 import type { NodeRegistry } from '../engine/registry.js';
 import { validateWorkflow, type ValidationIssue, type Workflow } from '../engine/schema.js';
 import type { NodeRunRecord, RunRecord } from '../engine/stores.js';
 import { chatCompletion, type ChatMessage } from '../nodes/providers/openrouter.js';
-import { buildChangeDigest } from './changeDigest.js';
+import { buildChangeDigest, resolveNodeRef } from './changeDigest.js';
 import { AgentValidationError, issuesToFeedback } from './generateWorkflow.js';
 import { extractJson } from './json.js';
 import { applyPatch, changeScope, PatchError, PatchOpArraySchema, type PatchOp } from './patch.js';
@@ -60,6 +60,12 @@ const PARSE_ISSUE: ValidationIssue = {
 const ChatTurnResponseSchema = z.object({
   reply: z.string().min(1),
   ops: PatchOpArraySchema.default([]),
+  // SPEC-step32.md B4 — the AI's own name/rename suggestion for this
+  // conversation, only ever solicited (via `buildChatSystemPrompt`'s
+  // `titleHint`) while `title_source !== 'user'`. Optional so every
+  // pre-step32 fixture (`{ reply, ops }`, no `title` key at all) still
+  // parses unchanged.
+  title: z.string().min(1).max(80).optional(),
 });
 
 function zodErrorToIssues(error: ZodError): ValidationIssue[] {
@@ -101,7 +107,16 @@ export interface ChatTurnEvents {
   onStart?: (ids: { userMessageId: string; assistantMessageId: string }) => void;
   onThinking?: (note: string) => void;
   onPatchOp?: (op: PatchOp, index: number, total: number) => void;
-  onMessage?: (p: { reply: string; workflow: Workflow; version: number; changeId: number | null }) => void;
+  /** SPEC-step32.md B4 — `title` is set only when this turn just applied a
+   * new AI-suggested conversation title (`runChatTurn` already called
+   * `conversations.rename(..., 'ai')` by the time this fires). */
+  onMessage?: (p: {
+    reply: string;
+    workflow: Workflow;
+    version: number;
+    changeId: number | null;
+    title?: string;
+  }) => void;
 }
 
 export interface ChatTurnDeps {
@@ -143,12 +158,66 @@ export interface ChatTurnResult {
   changeId: number | null;
   userMessageId: string;
   assistantMessageId: string;
+  /** SPEC-step32.md B4 — set only when this turn just applied a new
+   * AI-suggested conversation title. */
+  title?: string;
 }
 
-function buildLlmMessages(systemPrompt: string, history: Message[], userContent: string): ChatMessage[] {
+/**
+ * SPEC-step32.md B1 — the LLM-facing note appended to a message's `content`
+ * when (and only when) it carries attachments; `''` (appends nothing) when
+ * there are none. Never persisted — `MessagesRepo` always stores `content`
+ * verbatim, this note is synthesized fresh every time a prompt is built.
+ */
+function attachmentsNote(attachments: MessageAttachment[] | undefined): string {
+  if (!attachments || attachments.length === 0) return '';
+  const paths = attachments.map((a) => a.path).join(', ');
+  return `\n\n[Đính kèm ${attachments.length} ảnh đã upload sẵn: ${paths}. Khi cần đưa ảnh vào workflow, tạo node input.image với params.path = path tương ứng.]`;
+}
+
+function buildLlmMessages(
+  systemPrompt: string,
+  history: Message[],
+  userContent: string,
+  userAttachments: MessageAttachment[] | undefined,
+): ChatMessage[] {
   const recentHistory = history.slice(-CHAT_HISTORY_LIMIT);
-  const historyMessages: ChatMessage[] = recentHistory.map((m) => ({ role: m.role, content: m.content }));
-  return [{ role: 'system', content: systemPrompt }, ...historyMessages, { role: 'user', content: userContent }];
+  const historyMessages: ChatMessage[] = recentHistory.map((m) => ({
+    role: m.role,
+    content: m.content + attachmentsNote(m.attachments),
+  }));
+  return [
+    { role: 'system', content: systemPrompt },
+    ...historyMessages,
+    { role: 'user', content: userContent + attachmentsNote(userAttachments) },
+  ];
+}
+
+/**
+ * SPEC-step32.md B3 — when `ops` is a single op AND `workflow` is available
+ * to resolve it against, a short " — <detail>" suffix naming the specific
+ * node/edge involved (via `resolveNodeRef`, the same helper
+ * `changeDigest.ts` uses). `undefined` when there's nothing worth adding:
+ * `ops.length !== 1` (an aggregated count can't be attributed to one node),
+ * or the single op is `remove-edge`/`move-node` (neither carries a `nodeId`
+ * in its `PatchOp` shape — same exclusion `changeDigest.ts` documents).
+ */
+function describeSingleOp(op: PatchOp, workflow: Workflow): string | undefined {
+  switch (op.op) {
+    case 'add-node':
+      return `thêm ${resolveNodeRef(workflow, op.node.id)}`;
+    case 'remove-node':
+      return `xoá ${resolveNodeRef(workflow, op.nodeId)}`;
+    case 'update-node': {
+      const keys = [...(op.label !== undefined ? ['label'] : []), ...(op.params ? Object.keys(op.params) : [])];
+      return keys.length > 0 ? `sửa ${keys.join(', ')} của ${resolveNodeRef(workflow, op.nodeId)}` : undefined;
+    }
+    case 'add-edge':
+      return `nối ${resolveNodeRef(workflow, op.edge.from.node)} → ${resolveNodeRef(workflow, op.edge.to.node)}`;
+    case 'remove-edge':
+    case 'move-node':
+      return undefined;
+  }
 }
 
 /**
@@ -157,8 +226,14 @@ function buildLlmMessages(systemPrompt: string, history: Message[], userContent:
  * (SPEC-step22.md §5) so `routes/changes.ts`'s manual/"tay" change endpoint
  * can reuse it verbatim as the fallback `summary` when the caller doesn't
  * supply one, instead of duplicating this counting logic.
+ *
+ * `workflow` (SPEC-step32.md B3, optional/additive — omitted keeps the
+ * exact pre-step32 aggregate-only string) resolves a node/edge label detail
+ * onto the summary, but only for a single-op turn (see `describeSingleOp`) —
+ * a multi-op turn keeps the plain aggregate, since a count like "±2 node"
+ * can't be attributed to one label without listing every node involved.
  */
-export function summarizeOps(ops: PatchOp[]): string {
+export function summarizeOps(ops: PatchOp[], workflow?: Workflow): string {
   let added = 0;
   let removed = 0;
   let updated = 0;
@@ -197,7 +272,14 @@ export function summarizeOps(ops: PatchOp[]): string {
   if (edgesRemoved > 0) parts.push(`-${edgesRemoved} edge`);
   if (moved > 0) parts.push(`~${moved} vị trí`);
 
-  return `AI: ${parts.join(', ')}`;
+  const base = `AI: ${parts.join(', ')}`;
+
+  if (workflow && ops.length === 1) {
+    const detail = describeSingleOp(ops[0]!, workflow);
+    if (detail) return `${base} — ${detail}`;
+  }
+
+  return base;
 }
 
 /** SPEC-step30.md §3 — hard cap on the whole run-summary block (header +
@@ -367,6 +449,13 @@ export async function runChatTurn(
   conversationId: string,
   content: string,
   deps: ChatTurnDeps,
+  /** SPEC-step32.md B1 — images the user attached to THIS turn's message
+   * (already uploaded via `POST /api/upload`; this is just their `path`s +
+   * display metadata). Trailing/optional so every pre-step32 call site
+   * (tests included) keeps compiling and behaving identically without
+   * passing it — same "additive extra param" pattern as `ChatTurnDeps`'s own
+   * optional fields. */
+  attachments?: MessageAttachment[],
 ): Promise<ChatTurnResult> {
   const genId = deps.id ?? randomUUID;
   const model = deps.model ?? getEnv('OPENROUTER_DEFAULT_MODEL');
@@ -381,13 +470,19 @@ export async function runChatTurn(
     );
   }
 
+  // SPEC-step32.md B4 — computed once from the conversation read above and
+  // reused for every `buildChatSystemPrompt` call this turn makes (including
+  // the version-conflict rebuild): the AI is offered the "đặt tên" prompt
+  // block exactly while a human hasn't already claimed the title via PATCH.
+  const titleHint = conversation.titleSource !== 'user';
+
   // History BEFORE this turn — the new user message is appended separately
   // as the final "message user mới" (SPEC-step21.md §4.4), not folded in
   // here (it hasn't been written to the DB yet at this point anyway).
   const priorMessages = deps.messages.listByConversation(conversationId);
 
   const userMessageId = genId();
-  deps.messages.create({ id: userMessageId, conversationId, role: 'user', content, status: 'done' });
+  deps.messages.create({ id: userMessageId, conversationId, role: 'user', content, status: 'done', attachments });
   const assistantMessageId = genId();
   deps.messages.create({ id: assistantMessageId, conversationId, role: 'assistant', content: '', status: 'pending' });
   deps.events?.onStart?.({ userMessageId, assistantMessageId });
@@ -403,7 +498,14 @@ export async function runChatTurn(
       limit: DIGEST_CHANGE_FETCH_LIMIT,
     });
     const maxSeenId = unseen.length > 0 ? Math.max(...unseen.map((c) => c.id)) : null;
-    return { maxSeenId, digest: buildChangeDigest(unseen) };
+    // SPEC-step32.md B3 — `wf0` (a `let`, closed over by reference) is
+    // whatever this turn's "current workflow" is AT THE TIME this runs: the
+    // read-at-turn-start snapshot on the first call, or the freshly-rebuilt
+    // one when `handleVersionConflict` calls this again after reassigning
+    // `wf0` — either way it already reflects every one of these `unseen`
+    // changes having been applied, so it's the right snapshot to resolve
+    // their `nodeId`s' labels against.
+    return { maxSeenId, digest: buildChangeDigest(unseen, wf0) };
   }
 
   const now = deps.now ?? Date.now;
@@ -426,9 +528,10 @@ export async function runChatTurn(
   deps.events?.onThinking?.('Đang phân tích yêu cầu…');
 
   let messages = buildLlmMessages(
-    buildChatSystemPrompt(deps.registry, wf0, digest, computeRunSummary()),
+    buildChatSystemPrompt(deps.registry, wf0, digest, computeRunSummary(), titleHint),
     priorMessages,
     content,
+    attachments,
   );
 
   /**
@@ -449,9 +552,10 @@ export async function runChatTurn(
       v0 = latestVersion;
       ({ maxSeenId, digest } = computeDigestContext());
       messages = buildLlmMessages(
-        buildChatSystemPrompt(deps.registry, wf0, digest, computeRunSummary()),
+        buildChatSystemPrompt(deps.registry, wf0, digest, computeRunSummary(), titleHint),
         priorMessages,
         content,
+        attachments,
       );
       // SPEC-step21.md §4.5.b: rebuilding re-runs "bước 3-4", and bước 4 ends
       // with onThinking — re-emit it so an SSE consumer sees a fresh
@@ -515,16 +619,42 @@ export async function runChatTurn(
       continue;
     }
 
-    const { reply, ops } = respParsed.data;
+    const { reply, ops, title } = respParsed.data;
+    // SPEC-step32.md B4 — the LLM is only ever ASKED for `title` while
+    // `titleHint` is true (see `buildChatSystemPrompt` above), but a fixture
+    // or an unusually eager model could still send one back with `titleHint`
+    // false. More importantly: `titleHint` was captured from the
+    // conversation read at TURN START, before the (possibly multi-second)
+    // `chatCompletion` await above — if the user renamed the conversation
+    // (PATCH .../rename, `title_source='user'`) while that call was in
+    // flight, the stale `titleHint` would still read `true` and let the AI's
+    // title silently clobber the user's. Re-read `titleSource` fresh right
+    // here instead of trusting the closure: every step from here to the
+    // `conversations.rename(..., 'ai')` calls below (DB reads/writes,
+    // `applyPatch`, `validateWorkflow`) is synchronous, so this read stays
+    // accurate for the rest of the attempt.
+    const titleStillOpen = deps.conversations.get(conversationId)?.titleSource !== 'user';
+    const appliedTitle = titleStillOpen && title ? title : undefined;
 
     if (ops.length === 0) {
+      if (appliedTitle) {
+        deps.conversations.rename(conversationId, appliedTitle, 'ai');
+      }
       deps.messages.update(assistantMessageId, { content: reply, status: 'done' });
       if (maxSeenId !== null) {
         deps.conversations.setLastSeenChangeId(conversationId, maxSeenId);
       }
       deps.conversations.touch(conversationId);
-      deps.events?.onMessage?.({ reply, workflow: wf0, version: v0, changeId: null });
-      return { reply, workflow: wf0, version: v0, changeId: null, userMessageId, assistantMessageId };
+      deps.events?.onMessage?.({ reply, workflow: wf0, version: v0, changeId: null, title: appliedTitle });
+      return {
+        reply,
+        workflow: wf0,
+        version: v0,
+        changeId: null,
+        userMessageId,
+        assistantMessageId,
+        title: appliedTitle,
+      };
     }
 
     // Optimistic concurrency (SPEC-step21.md §4.5.a-b): re-read the
@@ -556,6 +686,14 @@ export async function runChatTurn(
       continue;
     }
 
+    // SPEC-step32.md B4 — "workflow.name = title trước khi save": stamped
+    // onto the patched workflow itself (so it lands in both `saveVersioned`
+    // and this change's `snapshotAfter` below) BEFORE the save, taking the
+    // workflow past its default "Workflow mới" name.
+    if (appliedTitle) {
+      validated.workflow.name = appliedTitle;
+    }
+
     let newVersion: number;
     try {
       newVersion = deps.workflows.saveVersioned(validated.workflow, fresh.version);
@@ -569,6 +707,10 @@ export async function runChatTurn(
       throw err;
     }
 
+    if (appliedTitle) {
+      deps.conversations.rename(conversationId, appliedTitle, 'ai');
+    }
+
     const change = deps.changes.create({
       workflowId: conversation.workflowId,
       conversationId,
@@ -576,7 +718,13 @@ export async function runChatTurn(
       scope: changeScope(ops),
       messageId: assistantMessageId,
       ops,
-      summary: summarizeOps(ops),
+      // SPEC-step32.md B3 — `validated.workflow` is the POST-patch snapshot
+      // (already includes any node this turn's ops just added), so a
+      // single-op turn's `add-node`/`update-node`/`add-edge` detail resolves
+      // correctly; a single `remove-node` still falls back to the bare id
+      // (the node is gone from this snapshot by definition) same as
+      // `changeDigest.ts`'s identical fallback.
+      summary: summarizeOps(ops, validated.workflow),
       snapshotAfter: validated.workflow,
     });
 
@@ -585,7 +733,13 @@ export async function runChatTurn(
     deps.conversations.touch(conversationId);
 
     ops.forEach((op, i) => deps.events?.onPatchOp?.(op, i, ops.length));
-    deps.events?.onMessage?.({ reply, workflow: validated.workflow, version: newVersion, changeId: change.id });
+    deps.events?.onMessage?.({
+      reply,
+      workflow: validated.workflow,
+      version: newVersion,
+      changeId: change.id,
+      title: appliedTitle,
+    });
 
     return {
       reply,
@@ -594,6 +748,7 @@ export async function runChatTurn(
       changeId: change.id,
       userMessageId,
       assistantMessageId,
+      title: appliedTitle,
     };
   }
 

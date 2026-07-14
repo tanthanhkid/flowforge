@@ -12,21 +12,26 @@ chat + canvas luôn cùng khung nhìn, và mọi thay đổi chỉnh tay đều 
 - 💬 **Chat-first**: mở app là landing hero — gõ mô tả tiếng Việt/Anh, Enter
   là có ngay conversation + workflow; AI trả lời bằng cách stream từng
   patch-op (`thinking → patch-op × N → message → done`), node/cạnh hiện dần
-  trên canvas kèm animation; nút ■ Dừng hủy lượt giữa chừng
+  trên canvas kèm animation; nút ■ Dừng hủy lượt giữa chừng; 📎 đính kèm ảnh
+  ngay trong composer (≤3 ảnh/tin — AI tự tạo node `input.image` với path đã
+  upload); AI tự đặt tên workflow ở lượt đầu (không đè tên bạn tự đặt); mỗi
+  câu trả lời có chip 🔧 `+N node · ~N param` — bấm là mở canvas xem thay đổi
 - 🪟 **Chat | Chia đôi | Canvas**: toggle 3 chế độ trên toolbar (hoặc ⌘\ /
   Ctrl+\), kéo divider chỉnh tỉ lệ tự do (lưu localStorage); canvas luôn
   mounted nên không mất trạng thái khi đổi chế độ
 - 📜 **Change log 2 chiều**: mọi thao tác tay trên canvas (thêm/xoá node,
-  sửa param, nối cạnh, kéo vị trí) tự động thành PatchOp persist lên server —
-  lượt chat sau AI đọc được qua "change digest" (`[tay]`/`[AI]`); tab
-  **Lịch sử** xem toàn bộ (🤖/✋) + nút **↺ Khôi phục** về trước một thay đổi
+  sửa param, nối cạnh, kéo vị trí, 🪄 sắp xếp) tự động thành PatchOp persist
+  lên server — lượt chat sau AI đọc được qua "change digest" (`[tay]`/`[AI]`);
+  summary chi tiết kiểu `sửa model của "Ảnh minh hoạ" (fal.image img-1):
+  flux/dev → flux-pro/kontext`; tab **Lịch sử** xem toàn bộ (🤖/✋) + nút
+  **↺ Khôi phục** về trước một thay đổi
 - 🧩 **Canvas React Flow**: kéo-thả 13 node types, port màu theo kiểu dữ liệu,
   edge validation, 🪄 auto-layout, preview thu gọn trên node; mỗi node có nút
   ✨ sửa nhanh bằng lệnh tự nhiên
 - 💰 **Cost estimate + catalog động**: badge `~$` breakdown từng node trước
   khi chạy; catalog ~1.240 model lấy trực tiếp từ API fal.ai + OpenRouter
   (giá thật, tier 💎/✅/💸/❓ theo ngưỡng giá, cache SQLite 24h), 48 preset ⭐
-  featured, luôn giữ option "Tự nhập"
+  featured, badge `[i2i]`/`[t2i]` cho model ảnh, luôn giữ option "Tự nhập"
 - 🎬 **`video.compose`** (ffmpeg local, 0 đồng): ghép video + voiceover, loop
   video theo độ dài audio, xuất mp4 dọc 1080×1920 sẵn đăng TikTok/Reels
 - 📄 **Input đa dạng**: text, upload ảnh/PDF (trích text qua unpdf)/markdown
@@ -90,8 +95,8 @@ sửa). Tab **Lịch sử** (panel phải) xem ai đổi gì, bấm ↺ để kh
 ## Test
 
 ```bash
-pnpm -r test                 # unit: 449 server + 20 shared + 356 web
-pnpm run e2e                 # Playwright free tier: 32 test, 0 chi phí API
+pnpm -r test                 # unit: 497 server + 20 shared + 402 web
+pnpm run e2e                 # Playwright free tier: 35 test, 0 chi phí API
                              #   (5 test luồng chat chạy qua mock OpenRouter nội bộ)
 pnpm run e2e:real            # 3 test gọi API thật (~$0.01–0.05/lần) — chạy chủ động
 pnpm --filter server smoke   # smoke 3 provider thật (LLM + TTS + ảnh rẻ)
@@ -121,7 +126,7 @@ rebuild prompt 1 lần) + `changeDigest.ts` (nén change log vào context).
 (`applyPatch`, `PatchOpSchema`) nằm ở `packages/shared`, dùng chung
 server/web (web apply optimistic từng op để animate). Node đăng ký qua
 NodeRegistry (`apps/server/src/nodes` — thêm node = thêm 1 file). Chi tiết:
-`docs/DESIGN-ai-native.md` + `docs/SPEC-step1.md` → `docs/SPEC-step31.md`.
+`docs/DESIGN-ai-native.md` + `docs/SPEC-step1.md` → `docs/SPEC-step32.md`.
 
 ```
 apps/server/src/{engine,nodes,agent,catalog,routes,db}
@@ -130,7 +135,7 @@ packages/shared/    # domain PatchOp dùng chung FE/BE (export TS source, không
 e2e/                # Playwright free tier (mock OpenRouter) + real tier gated
 samples/            # 11 workflow mẫu + assets
 data/artifacts/     # media outputs + uploads (gitignored)
-docs/               # DESIGN-ai-native.md + SPEC-step1..31
+docs/               # DESIGN-ai-native.md + SPEC-step1..32
 ```
 
 ## Node types (13)

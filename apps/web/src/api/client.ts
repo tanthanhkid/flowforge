@@ -6,6 +6,7 @@
  * reverse proxy that does the same forwarding.
  */
 import type {
+  ChatAttachment,
   ChatMessage,
   Conversation,
   ConversationSummary,
@@ -299,14 +300,22 @@ export function deleteConversation(id: string): Promise<void> {
   return request(`/api/conversations/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-/** 202 `{ userMessageId, assistantMessageId }` — a 409 (`turn-in-progress`) surfaces as an `ApiError`. */
+/**
+ * 202 `{ userMessageId, assistantMessageId }` — a 409 (`turn-in-progress`)
+ * surfaces as an `ApiError`. `attachments` (SPEC-step32.md B1) is additive —
+ * omitted from the body entirely (not sent as an empty array) when absent or
+ * empty, so an un-migrated server sees byte-identical old behavior.
+ */
 export function postChatMessage(
   conversationId: string,
   content: string,
+  attachments?: ChatAttachment[],
 ): Promise<{ userMessageId: string; assistantMessageId: string }> {
+  const body: { content: string; attachments?: ChatAttachment[] } = { content };
+  if (attachments && attachments.length > 0) body.attachments = attachments;
   return request(`/api/conversations/${encodeURIComponent(conversationId)}/messages`, {
     method: 'POST',
-    body: JSON.stringify({ content }),
+    body: JSON.stringify(body),
   });
 }
 
@@ -322,7 +331,14 @@ export function stopTurn(conversationId: string, messageId: string): Promise<{ s
 export interface TurnEventHandlers {
   onThinking?: (data: { note: string }) => void;
   onPatchOp?: (data: { op: PatchOp; index: number; total: number }) => void;
-  onMessage?: (data: { content: string; workflow: Workflow; version: number; changeId: number | null }) => void;
+  onMessage?: (data: {
+    content: string;
+    workflow: Workflow;
+    version: number;
+    changeId: number | null;
+    /** SPEC-step32.md B4 — present only when this turn just AI-renamed the conversation. */
+    title?: string;
+  }) => void;
   onError?: (data: { message: string; issues?: ValidationIssue[] }) => void;
   onDone?: () => void;
 }
@@ -350,7 +366,7 @@ export function openTurnEvents(conversationId: string, assistantMessageId: strin
 
   listen<{ note: string }>('thinking', handlers.onThinking);
   listen<{ op: PatchOp; index: number; total: number }>('patch-op', handlers.onPatchOp);
-  listen<{ content: string; workflow: Workflow; version: number; changeId: number | null }>(
+  listen<{ content: string; workflow: Workflow; version: number; changeId: number | null; title?: string }>(
     'message',
     handlers.onMessage,
   );

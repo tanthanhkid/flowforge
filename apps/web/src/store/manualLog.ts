@@ -52,6 +52,8 @@ const PARAMS_DEBOUNCE_MS = 800;
 const MOVE_DEBOUNCE_MS = 500;
 /** Spec §2: "Nhiều op gộp → nối bằng '; ' cắt 200 ký tự." */
 const SUMMARY_MAX_LENGTH = 200;
+/** SPEC-step32.md B3-FE: each individual old/new value inside an update-node summary line is JSON-stringified and cut to this length (independent of — and inside — the overall `SUMMARY_MAX_LENGTH` cap above). */
+const VALUE_TRUNCATE_LEN = 30;
 
 const TOAST_SYNC_FAIL =
   'Không áp được thay đổi sau khi đồng bộ — canvas đã cập nhật theo bản mới nhất.';
@@ -77,6 +79,38 @@ let queueTail: Promise<void> = Promise.resolve();
 
 function truncateSummary(summary: string): string {
   return summary.length > SUMMARY_MAX_LENGTH ? summary.slice(0, SUMMARY_MAX_LENGTH) : summary;
+}
+
+/**
+ * SPEC-step32.md B3-FE — JSON-stringifies `value` and truncates to
+ * `VALUE_TRUNCATE_LEN` chars. Same shape as the server's `changeDigest.ts`
+ * `formatValue` (JSON.stringify with a `String(value)` fallback for the rare
+ * value `JSON.stringify` itself returns `undefined` for), just a much
+ * shorter per-value budget since several of these can share one already
+ * 200-char-capped summary line.
+ */
+function truncateValue(value: unknown): string {
+  const json = JSON.stringify(value);
+  const text = json ?? String(value);
+  return text.length > VALUE_TRUNCATE_LEN ? `${text.slice(0, VALUE_TRUNCATE_LEN)}…` : text;
+}
+
+/**
+ * SPEC-step32.md B3-FE — a human-readable `"<label>" (<type> <id>)` node
+ * reference for an update-node summary line (`describeNode('n1')` →
+ * `"Ảnh minh hoạ" (fal.image n1)`), read from the LIVE workflow at flush
+ * time rather than anything captured when the debounce window opened — so a
+ * rename that lands during/after the edit still shows up correctly. Falls
+ * back to the bare quoted id (dropping the type, which is equally unknown)
+ * when the node has vanished entirely by flush time; falls back to the id
+ * standing in for the label specifically when the node exists but has no
+ * `label` set (the common case today — no label-editing UI exists yet, see
+ * `scheduleNodeLabelChange` below).
+ */
+function describeNode(nodeId: string): string {
+  const node = useFlowStore.getState().workflow.nodes.find((n) => n.id === nodeId);
+  if (!node) return `"${nodeId}"`;
+  return `"${node.label ?? nodeId}" (${node.type} ${nodeId})`;
 }
 
 /**
@@ -350,13 +384,23 @@ function flushNodeUpdate(nodeId: string): void {
     ...(labelChanged ? { label: entry.latestLabel } : {}),
   };
 
-  const fields: string[] = [];
+  // SPEC-step32.md B3-FE — rich per-key summary, built HERE at flush time
+  // (not when the debounce window opened): `describeNode` reads the node
+  // fresh, and each changed key gets its own "sửa <key> của <ref>: <old> →
+  // <new>" clause so a multi-key edit (two params changed inside the same
+  // 800ms window) still reads as N distinct, legible facts rather than one
+  // opaque blob. `enqueueManualOps` still applies the overall 200-char cap
+  // on top of this (unchanged — SPEC-step27.md §2).
+  const ref = describeNode(nodeId);
+  const parts: string[] = [];
   for (const [key, value] of Object.entries(changedParams)) {
-    fields.push(`${key} = ${JSON.stringify(value)}`);
+    parts.push(`sửa ${key} của ${ref}: ${truncateValue(entry.baselineParams[key])} → ${truncateValue(value)}`);
   }
-  if (labelChanged) fields.push(`label = ${JSON.stringify(entry.latestLabel)}`);
+  if (labelChanged) {
+    parts.push(`sửa label của ${ref}: ${truncateValue(entry.baselineLabel)} → ${truncateValue(entry.latestLabel)}`);
+  }
 
-  enqueueManualOps(entry.workflowId, [op], `node ${nodeId}: ${fields.join(', ')}`);
+  enqueueManualOps(entry.workflowId, [op], parts.join('; '));
 }
 
 /**

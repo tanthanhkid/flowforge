@@ -19,7 +19,7 @@
  */
 import type { ChangesRepo } from './db/changes.js';
 import type { ConversationsRepo } from './db/conversations.js';
-import type { MessagesRepo } from './db/messages.js';
+import type { MessageAttachment, MessagesRepo } from './db/messages.js';
 import type { WorkflowsRepo } from './db/workflows.js';
 import type { NodeRegistry } from './engine/registry.js';
 import type { ValidationIssue, Workflow } from './engine/schema.js';
@@ -36,7 +36,16 @@ import type { PatchOp } from './agent/patch.js';
 export type ChatTurnSseEvent =
   | { event: 'thinking'; data: { note: string } }
   | { event: 'patch-op'; data: { op: PatchOp; index: number; total: number } }
-  | { event: 'message'; data: { content: string; workflow: Workflow; version: number; changeId: number | null } }
+  | {
+      event: 'message';
+      /** SPEC-step32.md B4 — `title` is present only when this turn just
+       * applied a new AI-suggested title (`chatTurn.ts`'s `runChatTurn`
+       * already did the `conversations.rename()` by the time this event
+       * fires); `undefined` otherwise, which `JSON.stringify` below drops
+       * from the wire payload entirely, so a pre-step32 SSE consumer sees no
+       * difference at all. */
+      data: { content: string; workflow: Workflow; version: number; changeId: number | null; title?: string };
+    }
   | { event: 'error'; data: { message: string; issues?: ValidationIssue[] } }
   | { event: 'done'; data: Record<string, never> };
 
@@ -113,7 +122,11 @@ export class ChatTurnManager {
 
   constructor(private readonly deps: ChatTurnManagerDeps) {}
 
-  start(conversationId: string, content: string): { userMessageId: string; assistantMessageId: string } {
+  start(
+    conversationId: string,
+    content: string,
+    attachments?: MessageAttachment[],
+  ): { userMessageId: string; assistantMessageId: string } {
     if (this.activeByConversation.has(conversationId)) {
       throw new TurnInProgressError(conversationId);
     }
@@ -151,7 +164,7 @@ export class ChatTurnManager {
         state!.finalize = () => {
           this.emit(state!, {
             event: 'message',
-            data: { content: p.reply, workflow: p.workflow, version: p.version, changeId: p.changeId },
+            data: { content: p.reply, workflow: p.workflow, version: p.version, changeId: p.changeId, title: p.title },
           });
           this.emit(state!, { event: 'done', data: {} });
           this.finishTurn(conversationId, capturedIds!.assistantMessageId);
@@ -165,17 +178,22 @@ export class ChatTurnManager {
     // above; this .catch() is the last-resort net for the reject path
     // (abort / AgentValidationError / any other hard failure), converting
     // it into an `error` + `done` SSE pair instead of an unhandled rejection.
-    runChatTurn(conversationId, content, {
-      registry: this.deps.registry,
-      workflows: this.deps.workflows,
-      conversations: this.deps.conversations,
-      messages: this.deps.messages,
-      changes: this.deps.changes,
-      model: this.deps.model,
-      getLatestRun: this.deps.getLatestRun,
-      signal: controller.signal,
-      events,
-    }).catch((err: unknown) => {
+    runChatTurn(
+      conversationId,
+      content,
+      {
+        registry: this.deps.registry,
+        workflows: this.deps.workflows,
+        conversations: this.deps.conversations,
+        messages: this.deps.messages,
+        changes: this.deps.changes,
+        model: this.deps.model,
+        getLatestRun: this.deps.getLatestRun,
+        signal: controller.signal,
+        events,
+      },
+      attachments,
+    ).catch((err: unknown) => {
       if (!state) {
         // onStart never fired at all — shouldn't happen given the
         // conversation-existence check above, but there is no turn/buffer

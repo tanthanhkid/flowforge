@@ -24,7 +24,7 @@
 import { create } from 'zustand';
 import * as api from '../api/client.ts';
 import { ApiError } from '../api/client.ts';
-import type { ChatMessage, ConversationSummary, PatchOp } from '../api/types.ts';
+import type { ChatAttachment, ChatDiffCounts, ChatMessage, ConversationSummary, PatchOp } from '../api/types.ts';
 import { useFlowStore } from './flow.ts';
 // Post-review fix (SPEC-step27.md's critical finding #1/#4): every place
 // below that swaps `useFlowStore`'s workflow out from under the canvas must
@@ -56,6 +56,39 @@ let opHighlightNonceCounter = 0;
 function nextOpHighlightNonce(): number {
   opHighlightNonceCounter += 1;
   return opHighlightNonceCounter;
+}
+
+/** SPEC-step32.md B2 — maps each `PatchOp['op']` to its `ChatDiffCounts` key. */
+const DIFF_KEY_BY_OP: Record<PatchOp['op'], keyof ChatDiffCounts> = {
+  'add-node': 'addNode',
+  'remove-node': 'removeNode',
+  'update-node': 'updateNode',
+  'add-edge': 'addEdge',
+  'remove-edge': 'removeEdge',
+  'move-node': 'moveNode',
+};
+
+function emptyDiffCounts(): ChatDiffCounts {
+  return { addNode: 0, removeNode: 0, updateNode: 0, addEdge: 0, removeEdge: 0, moveNode: 0 };
+}
+
+/**
+ * SPEC-step32.md B2 — the diff chip's label, or `null` when there's nothing
+ * to show (every count is 0). Node/edge add-or-remove and param updates
+ * always show when non-zero; `moveNode` (a cosmetic AI re-layout nudge,
+ * SPEC-step26.md §2.1's autoLayout) only shows on its own, when it's the
+ * ONLY kind of change this turn made — otherwise it'd just be noise next to
+ * a real structural change.
+ */
+export function formatDiffChip(diff: ChatDiffCounts): string | null {
+  const parts: string[] = [];
+  if (diff.addNode > 0) parts.push(`+${diff.addNode} node`);
+  if (diff.removeNode > 0) parts.push(`-${diff.removeNode} node`);
+  if (diff.updateNode > 0) parts.push(`~${diff.updateNode} param`);
+  if (diff.addEdge > 0) parts.push(`+${diff.addEdge} nối`);
+  if (diff.removeEdge > 0) parts.push(`-${diff.removeEdge} nối`);
+  if (parts.length === 0 && diff.moveNode > 0) parts.push(`↔${diff.moveNode} vị trí`);
+  return parts.length > 0 ? `🔧 ${parts.join(' · ')}` : null;
 }
 
 export type LayoutMode = 'chat' | 'split' | 'canvas';
@@ -230,8 +263,9 @@ export interface ChatState {
   removeConversation(id: string): Promise<void>;
   /** Resolves `true` iff the message was actually sent (accepted by the
    * server); `false` if guarded out client-side or rejected with 409 — lets
-   * callers (ChatPane) only clear the composer on an actual send. */
-  sendMessage(content: string): Promise<boolean>;
+   * callers (ChatPane) only clear the composer on an actual send.
+   * `attachments` (SPEC-step32.md B1) is optional/additive. */
+  sendMessage(content: string, attachments?: ChatAttachment[]): Promise<boolean>;
   stopActiveTurn(): Promise<void>;
   toggleRail(): void;
   setSearch(query: string): void;
@@ -388,14 +422,24 @@ export const useChatStore = create<ChatState>()((set, get) => ({
     }
   },
 
-  async sendMessage(content) {
+  async sendMessage(content, attachments) {
     const trimmed = content.trim();
     const conversationId = get().activeConversationId;
     if (get().turnState !== 'idle' || !conversationId || trimmed.length < 1) return false;
 
+    // SPEC-step32.md B1 — normalized once, reused for both the outgoing
+    // request and the optimistic user message below. Calling
+    // `api.postChatMessage` with only 2 args (rather than a 3rd explicit
+    // `undefined`) when there's nothing to attach keeps the no-attachments
+    // call byte-identical to before this step (matters for exact
+    // `toHaveBeenCalledWith` assertions in existing tests).
+    const normalizedAttachments = attachments && attachments.length > 0 ? attachments : undefined;
+
     let ids: { userMessageId: string; assistantMessageId: string };
     try {
-      ids = await api.postChatMessage(conversationId, trimmed);
+      ids = normalizedAttachments
+        ? await api.postChatMessage(conversationId, trimmed, normalizedAttachments)
+        : await api.postChatMessage(conversationId, trimmed);
     } catch (err) {
       // SPEC-step23.md §4.4 — a 409 means the previous turn is still running
       // (the caller lost a race, or clicked before the UI disabled itself);
@@ -435,6 +479,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       content: trimmed,
       status: 'done',
       createdAt: now,
+      attachments: normalizedAttachments,
     };
     const assistantMessage: ChatMessage = {
       id: ids.assistantMessageId,
@@ -453,6 +498,10 @@ export const useChatStore = create<ChatState>()((set, get) => ({
 
     stopActiveTurnSubscription();
     const assistantMessageId = ids.assistantMessageId;
+    // SPEC-step32.md B2 — per-turn patch-op counts, reset by simply being a
+    // fresh local (this closure runs once per `sendMessage` call); finalized
+    // onto the assistant message at `onMessage` below.
+    const turnDiff = emptyDiffCounts();
     // Gate every state-mutating handler on "is this still the conversation
     // being displayed" — same pattern (and same reason) as store/flow.ts's
     // `run()` `isDisplayed` guard: the user can switch conversations while
@@ -469,6 +518,7 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       onPatchOp: (data) => {
         if (!isDisplayed()) return;
         const { op, index } = data;
+        turnDiff[DIFF_KEY_BY_OP[op.op]] += 1;
 
         // SPEC-step26.md §2.1 — the turn's FIRST patch-op is the auto-split
         // trigger now (superseding SPEC-step24.md §2's interim
@@ -537,10 +587,20 @@ export const useChatStore = create<ChatState>()((set, get) => ({
         set((state) => ({
           messages: state.messages.map((m) =>
             m.id === assistantMessageId
-              ? { ...m, content: data.content, status: 'done', changeId: data.changeId ?? undefined }
+              ? { ...m, content: data.content, status: 'done', changeId: data.changeId ?? undefined, diff: turnDiff }
               : m,
           ),
           workflowVersion: data.version,
+          // SPEC-step32.md B4 — the server just AI-renamed this conversation;
+          // mirror it into `activeTitle` + the rail's list entry immediately
+          // rather than waiting for `onDone`'s `loadConversations()` refetch
+          // (that refetch still runs unconditionally below, unchanged).
+          ...(data.title
+            ? {
+                activeTitle: data.title,
+                conversations: state.conversations.map((c) => (c.id === conversationId ? { ...c, title: data.title! } : c)),
+              }
+            : {}),
         }));
         // Mirrors Toolbar's ✨ Describe flow (SPEC-step16.md §3): the AI's
         // own node positions are only a coarse pre-validation nudge, so

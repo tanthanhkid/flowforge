@@ -66,6 +66,18 @@ export function openDb(path: string): Database.Database {
   db.pragma('journal_mode = WAL');
   db.exec(SCHEMA_SQL);
   ensureColumn(db, 'workflows', 'version', 'version INTEGER NOT NULL DEFAULT 0');
+  // SPEC-step32.md B1 — user-message image attachments (JSON array of
+  // { path, filename?, mime? }, NULL when the message has none).
+  ensureColumn(db, 'messages', 'attachments', 'attachments TEXT');
+  // SPEC-step32.md B4 — who last set `conversations.title`: 'auto' (first
+  // message's opening words, routes/conversations.ts's `autoTitle`), 'user'
+  // (PATCH rename), or 'ai' (chatTurn.ts applying the LLM's own `title`
+  // suggestion). Existing rows (pre-step32) all get 'auto' via the column
+  // DEFAULT, which is also the correct value for them — every conversation
+  // that predates this column got its title from `autoTitle`, never a user
+  // rename (that codepath already always went through `rename()`, which is
+  // updated by this same step to require the new `source` argument).
+  ensureColumn(db, 'conversations', 'title_source', "title_source TEXT NOT NULL DEFAULT 'auto'");
   return db;
 }
 

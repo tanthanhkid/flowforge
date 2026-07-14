@@ -88,6 +88,11 @@ interface Scenario {
   reply: string;
   ops: unknown[];
   delayMs: number;
+  /** SPEC-step32.md B4 — only a couple of scenarios set this; `respond()`
+   * below omits the `title` key entirely from the JSON payload when absent
+   * (mirrors `ChatTurnResponseSchema`'s `title` being `optional()`, and lets
+   * every pre-step32 scenario/test stay byte-identical). */
+  title?: string;
 }
 
 /**
@@ -115,6 +120,18 @@ function scenarioFor(userContent: string): Scenario {
   }
   if (userContent.includes('chỉ trả lời')) {
     return { reply: 'Đây là câu trả lời.', ops: [], delayMs: 0 };
+  }
+  // SPEC-step32.md B4 — the ONLY scenario that returns a `title`, so
+  // `chat.spec.ts`'s AI-title test gets a turn that both patches the
+  // workflow (title also gets stamped onto `workflow.name`, chatTurn.ts) and
+  // renames the conversation, same as a real turn would.
+  if (userContent.includes('đặt tên hộ')) {
+    return {
+      reply: 'Đã tạo workflow và đặt tên giúp bạn.',
+      ops: [{ op: 'add-node', node: { id: 'mock-title-1', type: 'input.text', params: { value: 'nội dung' } } }],
+      title: 'Chatbot CSKH tự động',
+      delayMs: 0,
+    };
   }
   return { reply: 'OK.', ops: [], delayMs: 0 };
 }
@@ -146,7 +163,11 @@ function handleChatCompletions(req: IncomingMessage, res: ServerResponse): void 
     const scenario = scenarioFor(lastUserContent(parsed.messages ?? []));
 
     const respond = (): void => {
-      const content = JSON.stringify({ reply: scenario.reply, ops: scenario.ops });
+      const content = JSON.stringify({
+        reply: scenario.reply,
+        ops: scenario.ops,
+        ...(scenario.title ? { title: scenario.title } : {}),
+      });
       sendJson(res, 200, { choices: [{ message: { content } }] });
     };
 

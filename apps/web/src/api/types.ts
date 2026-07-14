@@ -318,6 +318,30 @@ export interface ConversationSummary {
 export type MessageRole = 'user' | 'assistant';
 export type MessageStatus = 'pending' | 'streaming' | 'done' | 'error';
 
+// SPEC-step32.md B1 — an image already uploaded via `POST /api/upload`
+// (`{path, filename, mime, size, kind}`), referenced from a chat message by
+// its `path` only (the other `UploadResult` fields aren't persisted on the
+// message row).
+export interface ChatAttachment {
+  path: string;
+  filename?: string;
+  mime?: string;
+}
+
+// SPEC-step32.md B2 — per-op-kind counts for a single turn. Populated two
+// ways that must agree on shape: live, by store/chat.ts's `onPatchOp`
+// accumulator (finalized onto the assistant message at `onMessage`); on
+// reload, by `GET /api/conversations/:id` joining `workflow_changes` for any
+// message with a `changeId` and counting its `ops`.
+export interface ChatDiffCounts {
+  addNode: number;
+  removeNode: number;
+  updateNode: number;
+  addEdge: number;
+  removeEdge: number;
+  moveNode: number;
+}
+
 export interface ChatMessage {
   id: string;
   conversationId: string;
@@ -327,6 +351,10 @@ export interface ChatMessage {
   error?: string;
   changeId?: number;
   createdAt: number;
+  /** SPEC-step32.md B1 — images attached to this (user) message; null/undefined when none. */
+  attachments?: ChatAttachment[] | null;
+  /** SPEC-step32.md B2 — this (assistant) turn's patch-op counts; absent when the turn made no workflow change. */
+  diff?: ChatDiffCounts;
 }
 
 // Mirrors apps/server/src/agent/patch.ts's `PatchOpSchema` exactly (5 base

@@ -6,10 +6,18 @@
  */
 import type Database from 'better-sqlite3';
 
+/** SPEC-step32.md B4 — who last set `title`: 'auto' (opening words of the
+ * first message, `routes/conversations.ts`'s `autoTitle`), 'user' (PATCH
+ * rename), or 'ai' (`chatTurn.ts` applying the LLM's own `title` suggestion —
+ * only offered while the title is still not user-picked, so the AI can keep
+ * refining it turn over turn until a human takes over). */
+export type TitleSource = 'auto' | 'user' | 'ai';
+
 export interface Conversation {
   id: string;
   workflowId: string;
   title: string;
+  titleSource: TitleSource;
   createdAt: number;
   updatedAt: number;
   lastSeenChangeId: number | null;
@@ -29,6 +37,7 @@ interface ConversationRow {
   id: string;
   workflow_id: string;
   title: string;
+  title_source: string;
   created_at: number;
   updated_at: number;
   last_seen_change_id: number | null;
@@ -44,6 +53,7 @@ function toConversation(row: ConversationRow): Conversation {
     id: row.id,
     workflowId: row.workflow_id,
     title: row.title,
+    titleSource: row.title_source as TitleSource,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastSeenChangeId: row.last_seen_change_id,
@@ -116,8 +126,15 @@ export class ConversationsRepo {
     }));
   }
 
-  rename(id: string, title: string): void {
-    this.db.prepare(`UPDATE conversations SET title = ?, updated_at = ? WHERE id = ?`).run(title, this.now(), id);
+  /** `source` is required (not defaulted) so every call site states, in
+   * plain sight, WHO is renaming this conversation — `routes/conversations.ts`
+   * passes 'auto' from its own `autoTitle()` / 'user' from the PATCH route,
+   * `chatTurn.ts` passes 'ai' when applying the LLM's own `title` suggestion
+   * (SPEC-step32.md B4). */
+  rename(id: string, title: string, source: TitleSource): void {
+    this.db
+      .prepare(`UPDATE conversations SET title = ?, title_source = ?, updated_at = ? WHERE id = ?`)
+      .run(title, source, this.now(), id);
   }
 
   touch(id: string): void {

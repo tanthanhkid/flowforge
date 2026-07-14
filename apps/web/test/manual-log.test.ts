@@ -92,9 +92,13 @@ describe('scheduleNodeParamsChange — 800ms debounce', () => {
     }
 
     await vi.waitFor(() => expect(api.postManualChange).toHaveBeenCalledTimes(1));
+    // SPEC-step32.md B3-FE — rich summary built at flush time; 'n1' isn't in
+    // `baseWorkflow.nodes` so `describeNode` falls back to the bare quoted
+    // id (see manual-summary.step32.test.ts for the node-found/renamed
+    // cases, owned by that spec item).
     expect(api.postManualChange).toHaveBeenCalledWith('wf1', {
       ops: [{ op: 'update-node', nodeId: 'n1', params: { a: 'z' } }],
-      summary: 'node n1: a = "z"',
+      summary: 'sửa a của "n1": "x" → "z"',
       expectedVersion: 0,
     });
   });
@@ -142,8 +146,9 @@ describe('scheduleNodeParamsChange — 800ms debounce', () => {
     await vi.waitFor(() => expect(api.postManualChange).toHaveBeenCalledTimes(1));
     const [, body] = vi.mocked(api.postManualChange).mock.calls[0]!;
     expect(body.ops).toEqual([{ op: 'update-node', nodeId: 'n1', params: { a: 'y' }, label: 'Nice name' }]);
-    expect(body.summary).toContain('a = "y"');
-    expect(body.summary).toContain('label = "Nice name"');
+    // SPEC-step32.md B3-FE rich summary — one clause per changed key/label.
+    expect(body.summary).toContain('sửa a của "n1": "x" → "y"');
+    expect(body.summary).toContain('sửa label của "n1": undefined → "Nice name"');
   });
 });
 

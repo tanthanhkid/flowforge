@@ -507,6 +507,39 @@ Output mong đợi (CHỈ JSON object):
 `.trim();
 
 /**
+ * SPEC-step32.md B4 — appended (via `buildChatSystemPrompt`'s new optional
+ * `titleHint` 5th param) right after the digest/run-summary blocks, only
+ * while `conversations.title_source !== 'user'`: tells the LLM it may name
+ * (or rename) the conversation itself. `titleHint` absent/false keeps the
+ * prompt byte-identical to before this step — same "additive" pattern as
+ * `runSummary` (SPEC-step30.md §3).
+ */
+const TITLE_HINT_BLOCK = `
+## Đặt tên workflow
+Conversation này chưa có tên do người dùng tự đặt (tên hiện tại là do hệ thống tự đặt từ tin nhắn đầu, hoặc do chính bạn đặt ở lượt trước). Nếu bạn tạo mới hoặc chỉnh sửa workflow theo cách làm rõ hơn mục tiêu của nó, hãy kèm thêm field "title" trong JSON trả về: một tên ngắn gọn (tối đa 8 từ, bằng tiếng Việt) mô tả đúng mục tiêu của workflow. Nếu bạn đã đặt tên phù hợp ở lượt trước và bản chất workflow chưa thay đổi, có thể bỏ field "title" ở lượt này.
+`.trim();
+
+/** Same role as `CHAT_OUTPUT_CONTRACT` above but documents the optional
+ * `title` field — swapped in by `buildChatSystemPrompt` only when
+ * `titleHint` is truthy, so the base `CHAT_OUTPUT_CONTRACT` (used otherwise)
+ * never changes. */
+const CHAT_OUTPUT_CONTRACT_TITLE = `
+TRẢ VỀ DUY NHẤT 1 JSON OBJECT theo đúng dạng sau — không thêm giải thích, không bọc trong markdown, không thêm bất kỳ văn bản nào khác ngoài JSON object đó:
+{ "reply": "câu trả lời ngắn gọn bằng tiếng Việt, nói bạn vừa làm gì hoặc hỏi lại nếu thiếu thông tin", "ops": [ ... 0 hoặc nhiều patch op ... ], "title": "tuỳ chọn — tên ngắn gọn (tối đa 8 từ, tiếng Việt) đặt/đổi tên workflow, chỉ kèm khi cần (xem khối \"Đặt tên workflow\" phía trên)" }
+"ops" là mảng RỖNG khi bạn chỉ trả lời/hỏi lại, không cần sửa workflow. Mỗi "id" của node/edge MỚI phải là chuỗi duy nhất, không được trùng với bất kỳ id nào đã có trong workflow hiện tại. Bỏ hẳn field "title" (đừng để chuỗi rỗng) nếu bạn không cần đặt/đổi tên ở lượt này.
+`.trim();
+
+/** Same role as `CHAT_FEWSHOT` above but with a `title` field in its example
+ * output — swapped in by `buildChatSystemPrompt` only when `titleHint` is
+ * truthy, so the base `CHAT_FEWSHOT` (used otherwise) never changes. */
+const CHAT_FEWSHOT_TITLE = `
+Ví dụ:
+Người dùng: "Đổi nhiệt độ của node viết caption lên 0.9 và thêm 1 node tạo ảnh minh hoạ nối vào sau"
+Output mong đợi (CHỈ JSON object):
+{"reply":"Mình đã tăng temperature của node viết caption lên 0.9 và thêm node fal.image nối vào sau để tạo ảnh minh hoạ.","ops":[{"op":"update-node","nodeId":"caption","params":{"temperature":0.9}},{"op":"add-node","node":{"id":"illustration2","type":"fal.image","params":{"modelId":"fal-ai/flux/dev"}}},{"op":"add-edge","edge":{"id":"e10","from":{"node":"caption","port":"text"},"to":{"node":"illustration2","port":"prompt"}}}],"title":"Caption và ảnh minh hoạ"}
+`.trim();
+
+/**
  * System prompt for `chatTurn.ts`'s `runChatTurn()` (SPEC-step21.md §5): the
  * single system prompt behind "every turn is a patch, even the first one" —
  * unlike `buildGenerateSystemPrompt`/`buildEditSystemPrompt` there's no
@@ -524,12 +557,23 @@ Output mong đợi (CHỈ JSON object):
  * 2026-07-13 "sao ảnh kết quả không liên quan" session this fixes).
  * `undefined` (the default) omits the whole block, byte-for-byte identical
  * to the pre-step30 prompt.
+ *
+ * `titleHint` (SPEC-step32.md B4, additive 5th param — every pre-step32
+ * caller keeps compiling/behaving identically without passing it): when
+ * truthy, adds `TITLE_HINT_BLOCK` right after the digest/run-summary blocks
+ * and swaps `CHAT_OUTPUT_CONTRACT`/`CHAT_FEWSHOT` for their `_TITLE` variants
+ * (documenting the optional `title` field) — `chatTurn.ts` passes `true`
+ * exactly when `conversations.title_source !== 'user'`, i.e. the AI is still
+ * allowed to name/rename this conversation. `undefined`/`false` (the
+ * default) keeps the whole prompt byte-for-byte identical to the pre-step32
+ * one, same "additive" pattern as `runSummary` above.
  */
 export function buildChatSystemPrompt(
   registry: NodeRegistry,
   workflow: Workflow,
   digest: string,
   runSummary?: string,
+  titleHint?: boolean,
 ): string {
   const nodeCatalogSection = buildNodeCatalogSection(registry);
   const workflowJson = JSON.stringify(workflow, null, 2);
@@ -554,6 +598,10 @@ export function buildChatSystemPrompt(
           '',
         ];
 
+  const titleHintBlock = titleHint ? [TITLE_HINT_BLOCK, ''] : [];
+  const outputContract = titleHint ? CHAT_OUTPUT_CONTRACT_TITLE : CHAT_OUTPUT_CONTRACT;
+  const fewshot = titleHint ? CHAT_FEWSHOT_TITLE : CHAT_FEWSHOT;
+
   return [
     CHAT_ROLE,
     '',
@@ -564,10 +612,11 @@ export function buildChatSystemPrompt(
     '',
     ...digestBlock,
     ...runSummaryBlock,
+    ...titleHintBlock,
     CHAT_PATCH_OPS_DESCRIPTION,
     '',
-    CHAT_OUTPUT_CONTRACT,
+    outputContract,
     '',
-    CHAT_FEWSHOT,
+    fewshot,
   ].join('\n');
 }

@@ -94,6 +94,7 @@ describe('ConversationsRepo', () => {
       id: 'c1',
       workflowId: 'wf-1',
       title: 'Hello',
+      titleSource: 'auto',
       createdAt: 1000,
       updatedAt: 1000,
       lastSeenChangeId: null,
@@ -168,13 +169,15 @@ describe('ConversationsRepo', () => {
     expect(summary.lastRunStatus).toBe('error');
   });
 
-  it('rename() updates title and bumps updated_at', () => {
+  it('rename() updates title + title_source and bumps updated_at', () => {
     workflows.create(makeWorkflow('wf-1'));
     repo.create({ id: 'c1', workflowId: 'wf-1', title: 'Old' });
+    expect(repo.get('c1')!.titleSource).toBe('auto'); // column DEFAULT
     clock = 500;
-    repo.rename('c1', 'New');
+    repo.rename('c1', 'New', 'user');
     const conv = repo.get('c1')!;
     expect(conv.title).toBe('New');
+    expect(conv.titleSource).toBe('user');
     expect(conv.updatedAt).toBe(500);
   });
 

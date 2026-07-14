@@ -147,7 +147,7 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   registerAgentRoutes(app, { registry });
   registerSettingsRoutes(app, { envFilePath });
   registerEstimateRoutes(app);
-  registerConversationsRoutes(app, { conversationsRepo, messagesRepo, workflowsRepo, chatTurnManager });
+  registerConversationsRoutes(app, { conversationsRepo, messagesRepo, workflowsRepo, chatTurnManager, changesRepo });
   registerChangesRoutes(app, { workflowsRepo, changesRepo, conversationsRepo });
 
   app.addHook('onClose', async () => {

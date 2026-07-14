@@ -496,7 +496,19 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       workflow: { ...state.workflow, nodes: [...state.workflow.nodes, node] },
       ...(logged ? {} : { dirty: true }),
     });
-    if (logged) enqueueManualOps(state.workflow.id, [{ op: 'add-node', node }], `thêm node ${type} (${id})`);
+    // SPEC-step32.md B3-FE — appends the node's label when it has one (e.g.
+    // a node the AI created earlier in the conversation, since `add-node`
+    // ops can carry a `label`, packages/shared's patch.ts §schema); `addNode`
+    // itself never sets one today (no label-editing UI exists yet — see
+    // store/manualLog.ts's `scheduleNodeLabelChange`), so this is a no-op in
+    // practice for now but keeps the format consistent with `removeNode`.
+    if (logged) {
+      enqueueManualOps(
+        state.workflow.id,
+        [{ op: 'add-node', node }],
+        `thêm node ${type} (${id})${node.label ? ` "${node.label}"` : ''}`,
+      );
+    }
     return id;
   },
 
@@ -534,7 +546,14 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
 
   removeNode(id) {
     const logged = hasActiveConversation();
-    const workflowId = get().workflow.id;
+    const state = get();
+    const workflowId = state.workflow.id;
+    // SPEC-step32.md B3-FE — captured BEFORE the `set()` below removes the
+    // node from the workflow, so the summary can still name it (`describeNode`
+    // in store/manualLog.ts has the same "read before it's gone" concern for
+    // update-node, but there the node is still present at flush time — here
+    // it's about to be deleted synchronously by this very call).
+    const label = state.workflow.nodes.find((n) => n.id === id)?.label;
     if (logged) {
       // Post-review fix (major finding #2): cancel any still-pending
       // params/label (800ms) or move (500ms) debounce for this node BEFORE
@@ -555,7 +574,13 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     }));
     // A single remove-node op already cascades to every edge touching it
     // (packages/shared's applyPatch) — no separate remove-edge entries needed.
-    if (logged) enqueueManualOps(workflowId, [{ op: 'remove-node', nodeId: id }], `xoá node ${id}`);
+    if (logged) {
+      enqueueManualOps(
+        workflowId,
+        [{ op: 'remove-node', nodeId: id }],
+        `xoá node ${id}${label ? ` "${label}"` : ''}`,
+      );
+    }
   },
 
   addEdge(from, to) {

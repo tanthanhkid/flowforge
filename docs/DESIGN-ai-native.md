@@ -25,7 +25,7 @@ Lộ trình đã **ship xong toàn bộ** (project steps 20–28, commits `48a6f
 
 **Khoảng trống chưa implement (ứng viên cho bước sau, KHÔNG phải đã ship):**
 6. **System-note "Đã xem N thay đổi bạn vừa chỉnh tay…"** trong bubble assistant (Phần I §5): chưa có ở đâu trong code — digest vẫn được đưa vào context AI đầy đủ (cơ chế hoạt động đúng), chỉ thiếu tín hiệu trực quan cho user biết AI đã "đọc" thay đổi tay.
-7. **Diff chip 🔧 (+N node · ~N param)** trên bubble assistant (Phần II §II.5 mục 7): chưa implement (Phần II tham khảo, không bắt buộc).
+7. ~~**Diff chip 🔧 (+N node · ~N param)** trên bubble assistant (Phần II §II.5 mục 7): chưa implement~~ — **ĐÃ SHIP ở step 32** (SPEC-step32.md B2): chip đếm live từ patch-op + persist qua GET join `workflow_changes`, click mở split + fitView.
 
 ---
 

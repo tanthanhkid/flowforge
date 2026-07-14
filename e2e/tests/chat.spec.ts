@@ -11,6 +11,8 @@
  * state, and `beforeEach` resets the mock's recorded-requests log so each
  * test's own `GET /requests` assertions only ever see its own traffic.
  */
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
 // Keep in sync with playwright.config.ts's `MOCK_OPENROUTER_PORT` (no shared
@@ -18,6 +20,14 @@ import { expect, test, type Page } from '@playwright/test';
 // WEB_PORT constants having none either).
 const MOCK_PORT = 3979;
 const MOCK_BASE_URL = `http://127.0.0.1:${MOCK_PORT}`;
+
+// SPEC-step32.md B1 — a real image fixture for the composer-attachment test,
+// same "point at samples/assets/ rather than fabricating bytes" convention
+// as app.spec.ts's markdown-upload test (test 12) uses for its own fixture.
+const ATTACHMENT_FIXTURE = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  '../../samples/assets/stock-coffee.jpg',
+);
 
 interface MockChatMessage {
   role: string;
@@ -242,5 +252,130 @@ test.describe('FlowForge — chat loop (mock OpenRouter, free tier)', () => {
     const requests = await getMockRequests();
     const ownRequests = requests.filter((r) => lastUserContent(r.messages ?? []) === 'làm gì đó chậm nhé');
     expect(ownRequests.length).toBeGreaterThanOrEqual(2);
+  });
+});
+
+// SPEC-step32.md B1/B2/B4 (Wave 3) — the same mock-OpenRouter + real
+// browser/server/SQLite setup as the describe block above, covering the
+// step32 UX-backlog pack: composer image attachments, the diff chip (+its
+// reload-from-server path), and the AI-suggested conversation title.
+// Content strings sent from each test are deliberately distinct from every
+// scenario trigger used above (and from each other) so a conversation's
+// auto-generated title (`routes/conversations.ts`'s `autoTitle`, first 8
+// words of the first message) never collides with another test's — several
+// assertions below select `conversation-item` by that exact title text, and
+// the app DB/mock traffic persist across this whole file's tests.
+test.describe('FlowForge — ux pack (step 32) (mock OpenRouter, free tier)', () => {
+  test.skip(Boolean(process.env.E2E_REAL), 'mock OpenRouter chỉ chạy ở free tier');
+
+  test.beforeEach(async () => {
+    await resetMock();
+  });
+
+  // SPEC-step32.md B1 — attach an image via the composer's 📎 button before
+  // sending: the chip shows a real thumbnail once upload finishes, the sent
+  // user bubble carries the same thumbnail (both fresh and — implicitly,
+  // since ChatPane renders it off `message.attachments` either way — on a
+  // server reload), the POST body itself carries `attachments`, and the
+  // note `chatTurn.ts`'s `attachmentsNote` appends reaches the LLM prompt.
+  test('6. Đính kèm ảnh trong composer: chip thumbnail, bubble user hiện ảnh, POST + prompt AI có ghi chú đính kèm', async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await startFreshConversation(page);
+
+    await page.getByTestId('chat-attach-input').setInputFiles(ATTACHMENT_FIXTURE);
+    // Chip flips uploading (Spinner) -> done (an <img>) once `POST /api/upload` resolves.
+    const chipImg = page.locator('[data-testid="chat-attach-chip"] img');
+    await expect(chipImg).toBeVisible({ timeout: 10_000 });
+
+    await page.getByTestId('chat-input').fill('chỉ trả lời đi kèm ảnh nhé');
+    await expect(page.getByTestId('chat-send')).toBeEnabled();
+    const sendReq = page.waitForRequest(
+      (req) => req.method() === 'POST' && /\/api\/conversations\/[^/]+\/messages$/.test(new URL(req.url()).pathname),
+    );
+    await page.getByTestId('chat-send').click();
+
+    const req = await sendReq;
+    const body = req.postDataJSON() as { content: string; attachments?: Array<{ path: string }> };
+    expect(body.attachments).toHaveLength(1);
+    expect(body.attachments?.[0]?.path).toMatch(/^uploads\/.+\.jpe?g$/);
+
+    await expect(page.getByTestId('chat-message').filter({ hasText: 'Đây là câu trả lời.' })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    // Composer cleared its chips on a successful send.
+    await expect(page.getByTestId('chat-attach-chip')).toHaveCount(0);
+
+    const userAttachment = page.getByTestId('chat-message-attachment');
+    await expect(userAttachment).toBeVisible();
+    await expect(userAttachment).toHaveAttribute('src', /^\/artifacts\/uploads\//);
+
+    // `chatTurn.ts`'s `attachmentsNote` reached the actual LLM prompt (the
+    // mock's `/chat/completions` sees the OpenAI-format request body).
+    const requests = await getMockRequests();
+    expect(requests.length).toBeGreaterThan(0);
+    const lastContent = lastUserContent(requests.at(-1)!.messages ?? []);
+    expect(lastContent).toContain('Đính kèm 1 ảnh đã upload sẵn');
+    expect(lastContent).toContain('uploads/');
+  });
+
+  // SPEC-step32.md B2 — a turn that patches the workflow shows a diff chip
+  // with the right aggregate count; clicking it while chat-only re-opens the
+  // split (its CTA); reloading the page and re-selecting the conversation
+  // from the rail still shows the same chip (`GET /api/conversations/:id`'s
+  // `withDiff` join, B2-server).
+  test('7. Diff chip: số đúng trên bubble AI, click mở lại split, còn nguyên sau khi tải lại trang', async ({ page }) => {
+    await page.goto('/');
+    await expect(page.getByTestId('chat-hero')).toBeVisible();
+
+    await page.getByTestId('chat-input').fill('tạo văn bản để test diff chip nhé');
+    await page.getByTestId('chat-input').press('Enter');
+
+    await expect(page.getByTestId('chat-message').filter({ hasText: 'Đã thêm node văn bản.' })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const diffChip = page.getByTestId('chat-diff-chip');
+    await expect(diffChip).toHaveText('🔧 +1 node');
+
+    // Force chat-only, then use the chip's own CTA to re-open the split.
+    await page.getByTestId('mode-chat').click();
+    await expect(page.getByTestId('canvas-pane')).toHaveCSS('visibility', 'hidden');
+    await diffChip.click();
+    await expect(page.getByTestId('canvas-pane')).toHaveCSS('visibility', 'visible');
+
+    // Reload wipes client state entirely — re-select the same conversation
+    // from the rail (by its auto-generated title) and confirm the chip is
+    // rebuilt from the server's own `diff` join, not just client memory.
+    await page.reload();
+    const item = page.getByTestId('conversation-item').filter({ hasText: 'tạo văn bản để test diff chip nhé' });
+    await expect(item).toBeVisible({ timeout: 10_000 });
+    await item.click();
+    await expect(page.getByTestId('chat-diff-chip')).toHaveText('🔧 +1 node', { timeout: 10_000 });
+  });
+
+  // SPEC-step32.md B4 — a turn answered while the conversation's title isn't
+  // user-owned yet (`titleHint`) can rename it; the new title shows up both
+  // in the rail (`ConversationRail`'s list) and in the header (mirrored into
+  // `activeTitle`, surfaced here via the rename input's prefill value —
+  // `startRename()` seeds it from `activeTitle`).
+  test('8. AI đặt tên: turn đầu tự đặt tên workflow — hiện trên rail lẫn ô đổi tên', async ({ page }) => {
+    await page.goto('/');
+    await startFreshConversation(page);
+
+    await page.getByTestId('chat-input').fill('đặt tên hộ mình với nhé');
+    await page.getByTestId('chat-send').click();
+
+    await expect(page.getByTestId('chat-message').filter({ hasText: 'Đã tạo workflow và đặt tên giúp bạn.' })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const aiTitle = 'Chatbot CSKH tự động'; // must match e2e/mock-openrouter.ts's 'đặt tên hộ' scenario
+    await expect(page.getByTestId('conversation-item').filter({ hasText: aiTitle })).toBeVisible();
+
+    await page.getByTestId('chat-rename-btn').click();
+    await expect(page.getByTestId('chat-rename-input')).toHaveValue(aiTitle);
   });
 });

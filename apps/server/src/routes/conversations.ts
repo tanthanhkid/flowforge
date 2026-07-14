@@ -12,9 +12,12 @@ import { randomUUID } from 'node:crypto';
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { ConversationNotFoundError } from '../agent/chatTurn.js';
+import type { PatchOp } from '../agent/patch.js';
 import type { ChatTurnManager, ChatTurnSseEvent } from '../chatTurnManager.js';
 import { TurnInProgressError } from '../chatTurnManager.js';
+import type { ChangesRepo } from '../db/changes.js';
 import type { ConversationsRepo } from '../db/conversations.js';
+import type { Message } from '../db/messages.js';
 import type { MessagesRepo } from '../db/messages.js';
 import type { WorkflowsRepo } from '../db/workflows.js';
 import { emptyWorkflow } from '../engine/schema.js';
@@ -24,9 +27,94 @@ export interface ConversationsRouteDeps {
   messagesRepo: MessagesRepo;
   workflowsRepo: WorkflowsRepo;
   chatTurnManager: ChatTurnManager;
+  /** SPEC-step32.md B2 — needed by `GET /:id` to join each message's
+   * `changeId` against `workflow_changes` and count its ops into a `diff`. */
+  changesRepo: ChangesRepo;
+}
+
+/** SPEC-step32.md B2 — mirrors apps/web/src/api/types.ts's `ChatDiffCounts`
+ * shape exactly (hand-mirrored, same "no shared package for this yet"
+ * situation as every other FE/BE type pair in this route file's neighbours). */
+interface ChatDiffCounts {
+  addNode: number;
+  removeNode: number;
+  updateNode: number;
+  addEdge: number;
+  removeEdge: number;
+  moveNode: number;
+}
+
+/** Tallies a change row's `ops` by kind — the `diff` chip's raw counts. */
+function countOpsByKind(ops: PatchOp[]): ChatDiffCounts {
+  const counts: ChatDiffCounts = {
+    addNode: 0,
+    removeNode: 0,
+    updateNode: 0,
+    addEdge: 0,
+    removeEdge: 0,
+    moveNode: 0,
+  };
+  for (const op of ops) {
+    switch (op.op) {
+      case 'add-node':
+        counts.addNode++;
+        break;
+      case 'remove-node':
+        counts.removeNode++;
+        break;
+      case 'update-node':
+        counts.updateNode++;
+        break;
+      case 'add-edge':
+        counts.addEdge++;
+        break;
+      case 'remove-edge':
+        counts.removeEdge++;
+        break;
+      case 'move-node':
+        counts.moveNode++;
+        break;
+    }
+  }
+  return counts;
+}
+
+/**
+ * SPEC-step32.md B2 — reload path for the diff chip: a message only gets a
+ * `diff` key when it has a `changeId` AND that change row still exists
+ * (defensive — every `changeId` on a message is written by the same turn
+ * that created the change row, so in practice it always resolves); every
+ * other message is returned untouched (no `diff` key at all, matching the
+ * live/`onPatchOp` path's optional `ChatMessage['diff']` field).
+ */
+function withDiff(message: Message, changesRepo: ChangesRepo): Message & { diff?: ChatDiffCounts } {
+  if (message.changeId === undefined) return message;
+  const change = changesRepo.get(message.changeId);
+  if (!change) return message;
+  return { ...message, diff: countOpsByKind(change.ops as PatchOp[]) };
 }
 
 const TitleSchema = z.object({ title: z.string().min(1).max(120) });
+
+/**
+ * SPEC-step32.md B1 — same `uploads/<uuid>.<ext>` shape `routes/upload.ts`
+ * hands back (only the 4 image extensions it can produce for an `image`-kind
+ * upload), matched against the WHOLE string so a value like
+ * `uploads/../../etc/passwd.png` can't sneak through: the character class
+ * between the literal `uploads/` prefix and the extension has no `/`, so
+ * there is no way to spell a path-traversal segment inside it at all — same
+ * traversal-proofing philosophy as `routes/artifacts.ts`'s serve route.
+ */
+const MessageAttachmentSchema = z.object({
+  path: z.string().regex(/^uploads\/[A-Za-z0-9.-]+\.(png|jpe?g|webp|gif)$/),
+  filename: z.string().optional(),
+  mime: z.string().optional(),
+});
+
+const MessageBodySchema = z.object({
+  content: z.string().min(1),
+  attachments: z.array(MessageAttachmentSchema).max(3).optional(),
+});
 
 const HEARTBEAT_MS = 15_000;
 
@@ -43,7 +131,7 @@ function autoTitle(content: string): string {
 }
 
 export function registerConversationsRoutes(app: FastifyInstance, deps: ConversationsRouteDeps): void {
-  const { conversationsRepo, messagesRepo, workflowsRepo, chatTurnManager } = deps;
+  const { conversationsRepo, messagesRepo, workflowsRepo, chatTurnManager, changesRepo } = deps;
 
   app.post('/api/conversations', async (_request, reply) => {
     const workflowId = randomUUID();
@@ -67,7 +155,7 @@ export function registerConversationsRoutes(app: FastifyInstance, deps: Conversa
     const wfv = workflowsRepo.getWithVersion(conversation.workflowId);
     reply.send({
       conversation,
-      messages: messagesRepo.listByConversation(id),
+      messages: messagesRepo.listByConversation(id).map((m) => withDiff(m, changesRepo)),
       workflow: wfv?.workflow,
       version: wfv?.version,
     });
@@ -84,7 +172,10 @@ export function registerConversationsRoutes(app: FastifyInstance, deps: Conversa
       reply.code(400).send({ error: 'title is required (string, 1-120 characters)' });
       return;
     }
-    conversationsRepo.rename(id, parsed.data.title);
+    // SPEC-step32.md B4 — a user-initiated rename always marks the title as
+    // user-owned, so the AI's `titleHint` (chatTurn.ts) stops offering to
+    // change it on future turns.
+    conversationsRepo.rename(id, parsed.data.title, 'user');
     reply.send({ conversation: conversationsRepo.get(id) });
   });
 
@@ -106,19 +197,21 @@ export function registerConversationsRoutes(app: FastifyInstance, deps: Conversa
       return;
     }
 
-    const body = (request.body ?? {}) as { content?: unknown };
-    if (typeof body.content !== 'string' || body.content.length < 1) {
-      reply.code(400).send({ error: 'content is required (string, min length 1)' });
+    const parsed = MessageBodySchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply
+        .code(400)
+        .send({ error: 'content is required (string, min length 1); attachments: tối đa 3 ảnh đã upload hợp lệ' });
       return;
     }
-    const content = body.content;
+    const { content, attachments } = parsed.data;
 
     if (conversation.title === '') {
-      conversationsRepo.rename(id, autoTitle(content));
+      conversationsRepo.rename(id, autoTitle(content), 'auto');
     }
 
     try {
-      const ids = chatTurnManager.start(id, content);
+      const ids = chatTurnManager.start(id, content, attachments);
       reply.code(202).send(ids);
     } catch (err) {
       if (err instanceof TurnInProgressError) {
