@@ -187,7 +187,7 @@ describe('createDefaultRegistry (step10)', () => {
   it('registers all node types including input.image/input.pdf/input.markdown', () => {
     const registry = createDefaultRegistry();
     const types = registry.list().map((def) => def.type).sort();
-    expect(types).toHaveLength(14);
+    expect(types).toHaveLength(15);
     expect(types).toContain('input.image');
     expect(types).toContain('input.pdf');
     expect(types).toContain('input.markdown');
@@ -196,7 +196,7 @@ describe('createDefaultRegistry (step10)', () => {
   it('describeForAgent() exposes the 3 new node types with their paramsJsonSchema (agent ✨ sees them for free)', () => {
     const registry = createDefaultRegistry();
     const described = registry.describeForAgent();
-    expect(described).toHaveLength(14);
+    expect(described).toHaveLength(15);
     for (const type of ['input.image', 'input.pdf', 'input.markdown']) {
       const entry = described.find((d) => d.type === type);
       expect(entry).toBeDefined();
