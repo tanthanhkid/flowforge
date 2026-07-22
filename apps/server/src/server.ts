@@ -17,6 +17,7 @@ import { MessagesRepo } from './db/messages.js';
 import { openDb, SqliteCacheStore, SqliteRunStore } from './db/sqlite.js';
 import { WorkflowsRepo } from './db/workflows.js';
 import { Engine, WorkflowValidationError } from './engine/executor.js';
+import { GateRegistry } from './engine/gateRegistry.js';
 import type { NodeRegistry } from './engine/registry.js';
 import { createDefaultRegistry } from './nodes/index.js';
 import { registerAgentRoutes } from './routes/agent.js';
@@ -73,8 +74,14 @@ export async function buildServer(opts: ServerOpts = {}): Promise<FastifyInstanc
   const db = openDb(dbPath);
   const runStore = new SqliteRunStore(db);
   const cacheStore = new SqliteCacheStore(db);
-  const engine = new Engine(registry, { runs: runStore, cache: cacheStore }, { artifactsDir });
-  const runManager = new RunManager(engine, runStore, registry);
+  // SPEC-step33.md §33c — one GateRegistry shared between the Engine (parks
+  // `flow.approveGate` via `ctx.awaitApproval`) and the RunManager (resolves
+  // it from `POST /api/runs/:id/resume`). RunManager owns nothing about
+  // *how* nodes park — it only forwards resolve/reject calls — so the
+  // instance is created here at the composition root and handed to both.
+  const gateRegistry = new GateRegistry();
+  const engine = new Engine(registry, { runs: runStore, cache: cacheStore }, { artifactsDir, gate: gateRegistry });
+  const runManager = new RunManager(engine, runStore, registry, gateRegistry);
   const workflowsRepo = new WorkflowsRepo(db);
   const conversationsRepo = new ConversationsRepo(db);
   const messagesRepo = new MessagesRepo(db);

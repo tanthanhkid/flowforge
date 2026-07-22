@@ -10,6 +10,7 @@
 import type { OutgoingHttpHeaders } from 'node:http';
 import type Database from 'better-sqlite3';
 import type { FastifyInstance } from 'fastify';
+import { CutPlanSchema } from 'shared';
 import type { WorkflowsRepo } from '../db/workflows.js';
 import { WorkflowValidationError } from '../engine/executor.js';
 import type { Workflow } from '../engine/schema.js';
@@ -25,6 +26,11 @@ interface CreateRunBody {
   workflowId?: string;
   workflow?: Workflow;
   forceNodes?: string[];
+}
+
+interface ResumeRunBody {
+  nodeId?: string;
+  output?: unknown;
 }
 
 interface RunListRow {
@@ -112,6 +118,61 @@ export function registerRunsRoutes(app: FastifyInstance, deps: RunsRouteDeps): v
       return;
     }
     reply.send(found);
+  });
+
+  // SPEC-step33.md §33c.0 — run-abort. 200 {stopped:true} if the run was
+  // active (its AbortController existed and got aborted); 404 if the run
+  // doesn't exist at all; 409 if it exists but isn't active (already
+  // finished, or orphaned by a server restart — runManager.isActive() is
+  // the same "will this run ever emit again" check /events already uses).
+  app.post('/api/runs/:id/stop', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const found = runManager.getRun(id);
+    if (!found) {
+      reply.code(404).send({ error: `Run "${id}" not found` });
+      return;
+    }
+    const stopped = runManager.stopRun(id);
+    if (!stopped) {
+      reply.code(409).send({ error: `Run "${id}" is not active` });
+      return;
+    }
+    reply.code(200).send({ stopped: true });
+  });
+
+  // SPEC-step33.md §33c — resumes a run parked at `flow.approveGate` (or
+  // any future gate node). `output` is the user-approved/edited CutPlan,
+  // shape-validated against the shared CutPlanSchema before it's allowed to
+  // flow downstream. 409 when there's no pending gate for (id, nodeId) —
+  // e.g. the run already moved past it, or (documented nợ) the server
+  // restarted while it was awaiting.
+  app.post('/api/runs/:id/resume', async (request, reply) => {
+    const { id } = request.params as { id: string };
+    const body = (request.body ?? {}) as ResumeRunBody;
+
+    const found = runManager.getRun(id);
+    if (!found) {
+      reply.code(404).send({ error: `Run "${id}" not found` });
+      return;
+    }
+
+    if (typeof body.nodeId !== 'string' || body.nodeId.length === 0) {
+      reply.code(400).send({ error: 'Thiếu nodeId' });
+      return;
+    }
+
+    const parsed = CutPlanSchema.safeParse(body.output);
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'output không hợp lệ (không đúng CutPlan)', issues: parsed.error.issues });
+      return;
+    }
+
+    const resumed = runManager.resolveGate(id, body.nodeId, parsed.data);
+    if (!resumed) {
+      reply.code(409).send({ error: `Không có gate đang chờ duyệt cho node "${body.nodeId}" ở run "${id}"` });
+      return;
+    }
+    reply.code(200).send({ resumed: true });
   });
 
   app.get('/api/runs/:id/events', async (request, reply) => {

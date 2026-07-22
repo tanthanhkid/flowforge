@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { cacheKey, type CacheStore } from './cache.js';
 import { createContext } from './context.js';
+import type { GateRegistry } from './gateRegistry.js';
 import { buildGraph, descendantsOf } from './graph.js';
 import type { NodeRegistry } from './registry.js';
 import { validateWorkflow, type ValidationIssue, type Workflow } from './schema.js';
@@ -12,6 +13,14 @@ export interface EngineOptions {
   artifactsDir?: string;
   concurrency?: number;
   now?: () => number;
+  /**
+   * SPEC-step33.md §33c — optional so every existing/unit-test Engine (no
+   * gate injected) keeps `ctx.awaitApproval` undefined and `flow.approveGate`
+   * passes through instead of parking. Production wiring (`server.ts`)
+   * shares one instance between the Engine and the RunManager that resolves
+   * it from `POST /api/runs/:id/resume`.
+   */
+  gate?: GateRegistry;
 }
 
 export interface RunOptions {
@@ -61,6 +70,7 @@ export class Engine extends EventEmitter {
   private readonly artifactsDir: string;
   private readonly concurrency: number;
   private readonly now: () => number;
+  private readonly gate?: GateRegistry;
 
   constructor(registry: NodeRegistry, stores: { runs: RunStore; cache: CacheStore }, opts: EngineOptions = {}) {
     super();
@@ -70,6 +80,7 @@ export class Engine extends EventEmitter {
     this.artifactsDir = opts.artifactsDir ?? DEFAULT_ARTIFACTS_DIR;
     this.concurrency = opts.concurrency ?? Infinity;
     this.now = opts.now ?? Date.now;
+    this.gate = opts.gate;
   }
 
   async run(workflow: Workflow, options: RunOptions = {}): Promise<RunResult> {
@@ -112,7 +123,11 @@ export class Engine extends EventEmitter {
     const emitNodeState = (
       nodeId: string,
       state: NodeState,
-      extra?: { error?: string; cached?: boolean },
+      // `pendingApproval` (SPEC-step33.md §33c M2): additive so a live SSE
+      // client sees the gate's payload straight off the 'node:state' event
+      // instead of round-tripping GET /api/runs/:id — only set for
+      // state==='awaiting'. RunManager forwards `extra` unchanged.
+      extra?: { error?: string; cached?: boolean; pendingApproval?: unknown },
     ): void => {
       this.emit('node:state', { runId, nodeId, state, ...extra });
     };
@@ -245,6 +260,22 @@ export class Engine extends EventEmitter {
             this.emit('node:log', { runId, nodeId, message });
           },
         });
+
+        // SPEC-step33.md §33c: only set when the Engine was built with a
+        // GateRegistry — headless/unit-test Engines leave this undefined so
+        // `flow.approveGate` (and any future gate node) feature-detects and
+        // passes its input through instead of parking. The node stays in
+        // `inFlight` while parked (this call doesn't resolve until the gate
+        // does) — the `while (inFlight.size > 0)` loop below already handles
+        // that with no special-casing, and independent branches keep running.
+        const gate = this.gate;
+        if (gate) {
+          ctx.awaitApproval = async (payload: unknown): Promise<unknown> => {
+            upsertNode({ nodeId, state: 'awaiting', cacheHit: false, startedAt, outputs: { pendingApproval: payload } });
+            emitNodeState(nodeId, 'awaiting', { pendingApproval: payload });
+            return gate.register(runId, nodeId, payload, runSignal);
+          };
+        }
 
         const outputs = await def.execute({ inputs, params, ctx });
         if (key) this.cacheStore.set(key, def.type, outputs);

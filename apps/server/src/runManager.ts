@@ -15,6 +15,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Engine } from './engine/executor.js';
 import { WorkflowValidationError } from './engine/executor.js';
+import type { GateRegistry } from './engine/gateRegistry.js';
 import type { NodeRegistry } from './engine/registry.js';
 import { validateWorkflow, type Workflow } from './engine/schema.js';
 import type { NodeRunRecord, RunRecord, RunStore } from './engine/stores.js';
@@ -33,6 +34,7 @@ interface EngineNodeStateEvent {
   state: NodeState;
   error?: string;
   cached?: boolean;
+  pendingApproval?: unknown;
 }
 
 interface EngineNodeLogEvent {
@@ -49,11 +51,21 @@ interface EngineRunStateEvent {
 export class RunManager {
   private readonly listeners = new Map<string, Set<RunEventListener>>();
   private readonly activeRuns = new Set<string>();
+  // SPEC-step33.md §33c.0 — run-abort plumbing: one AbortController per
+  // in-flight run, created in start() and handed to engine.run() as
+  // RunOptions.signal (already threaded through to every node's ctx.signal
+  // by executor.ts). Removed once run:state fires (mirrors activeRuns).
+  private readonly controllers = new Map<string, AbortController>();
 
   constructor(
     private readonly engine: Engine,
     private readonly runStore: RunStore,
     private readonly registry: NodeRegistry,
+    // Optional (backward-compatible): shared with the same GateRegistry
+    // instance passed to `Engine`'s `EngineOptions.gate` (see server.ts) so
+    // `resolveGate`/`rejectGate` here resolve the promise executor.ts's
+    // `ctx.awaitApproval` is parked on.
+    private readonly gate?: GateRegistry,
   ) {
     this.engine.on('node:state', (event: EngineNodeStateEvent) => {
       this.dispatch(event.runId, { type: 'node:state', data: event });
@@ -64,6 +76,7 @@ export class RunManager {
     this.engine.on('run:state', (event: EngineRunStateEvent) => {
       this.dispatch(event.runId, { type: 'run:state', data: event });
       this.activeRuns.delete(event.runId);
+      this.controllers.delete(event.runId);
       // Spec §3: once run:state has been broadcast, drop the (now-useless)
       // subscriber set for this runId.
       this.listeners.delete(event.runId);
@@ -79,20 +92,57 @@ export class RunManager {
 
     const runId = randomUUID();
     this.activeRuns.add(runId);
+    const controller = new AbortController();
+    this.controllers.set(runId, controller);
 
-    this.engine.run(validation.workflow, { runId, forceNodes: options?.forceNodes }).catch((err: unknown) => {
-      // engine.run() is designed to always resolve a RunResult (node-level
-      // failures route through finishNodeError, not a rejection) — this
-      // catch is a last-resort safety net for a truly unexpected failure
-      // (e.g. the run store itself throwing) so it never becomes an
-      // unhandled promise rejection. Subscribers simply won't see a
-      // run:state for this runId in that case.
-      this.activeRuns.delete(runId);
-      // eslint-disable-next-line no-console
-      console.error(`[RunManager] run ${runId} failed unexpectedly:`, err);
-    });
+    this.engine
+      .run(validation.workflow, { runId, forceNodes: options?.forceNodes, signal: controller.signal })
+      .catch((err: unknown) => {
+        // engine.run() is designed to always resolve a RunResult (node-level
+        // failures route through finishNodeError, not a rejection) — this
+        // catch is a last-resort safety net for a truly unexpected failure
+        // (e.g. the run store itself throwing) so it never becomes an
+        // unhandled promise rejection. Subscribers simply won't see a
+        // run:state for this runId in that case.
+        this.activeRuns.delete(runId);
+        this.controllers.delete(runId);
+        // eslint-disable-next-line no-console
+        console.error(`[RunManager] run ${runId} failed unexpectedly:`, err);
+      });
 
     return { runId };
+  }
+
+  /**
+   * SPEC-step33.md §33c.0 — aborts the run's AbortController (propagates
+   * into every node's `ctx.signal`/`ctx.poll` and, if the run is parked at a
+   * gate, rejects that gate's promise). Returns false if the run isn't
+   * currently active (unknown runId, or already finished) — the route layer
+   * turns that into 404/409.
+   */
+  stopRun(runId: string): boolean {
+    const controller = this.controllers.get(runId);
+    if (!controller) return false;
+    controller.abort();
+    return true;
+  }
+
+  /**
+   * SPEC-step33.md §33c — resolves the gate `flow.approveGate` (or any
+   * future gate node) is parked on for (runId, nodeId) with the
+   * user-approved/edited value. Returns false if there's no pending gate
+   * (unknown/mismatched nodeId, run already past it, or — the documented
+   * nợ — the server restarted while it was awaiting).
+   */
+  resolveGate(runId: string, nodeId: string, value: unknown): boolean {
+    if (!this.gate) return false;
+    return this.gate.resolve(runId, nodeId, value);
+  }
+
+  /** Passthrough counterpart to `resolveGate` — not currently routed from HTTP (no reject endpoint), kept for parity/tests and future use (e.g. an explicit "reject this plan" action). */
+  rejectGate(runId: string, nodeId: string, err: Error): boolean {
+    if (!this.gate) return false;
+    return this.gate.reject(runId, nodeId, err);
   }
 
   /** Subscribes to events for a runId; returns an unsubscribe function. */

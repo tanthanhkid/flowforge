@@ -1,7 +1,8 @@
 /**
- * Node registration (SPEC-step2.md §7): wires all 15 node types onto a
+ * Node registration (SPEC-step2.md §7): wires all 16 node types onto a
  * NodeRegistry (13 through SPEC-step32.md, `video.transcribe` added by
- * SPEC-step33.md §33a, `llm.selectMoments` added by SPEC-step33.md §33b).
+ * SPEC-step33.md §33a, `llm.selectMoments` added by SPEC-step33.md §33b,
+ * `flow.approveGate` added by SPEC-step33.md §33c).
  * `createDefaultRegistry()` is the one-liner the server/agent layer and
  * scripts reach for; `registerAllNodes()` is exposed separately so tests
  * can register onto a registry that already has mock nodes on it.
@@ -9,6 +10,7 @@
 import { NodeRegistry } from '../engine/registry.js';
 import { falImageNode } from './fal.image.js';
 import { falVideoNode } from './fal.video.js';
+import { flowApproveGateNode } from './flow.approveGate.js';
 import { inputFileNode } from './input.file.js';
 import { inputImageNode } from './input.image.js';
 import { inputMarkdownNode } from './input.markdown.js';
@@ -39,6 +41,7 @@ export function registerAllNodes(registry: NodeRegistry): void {
   registry.register(vbeeTtsNode);
   registry.register(videoComposeNode);
   registry.register(videoTranscribeNode);
+  registry.register(flowApproveGateNode);
 }
 
 export function createDefaultRegistry(): NodeRegistry {
@@ -50,6 +53,7 @@ export function createDefaultRegistry(): NodeRegistry {
 export {
   falImageNode,
   falVideoNode,
+  flowApproveGateNode,
   inputFileNode,
   inputImageNode,
   inputMarkdownNode,

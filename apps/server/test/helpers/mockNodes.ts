@@ -202,9 +202,71 @@ export const mockAnyInNode: NodeDefinition<Record<string, never>> = {
 };
 
 // ---------------------------------------------------------------------------
+// mock.awaitAbort — execute() never resolves on its own; it only settles
+// (rejecting) when `ctx.signal` aborts. Stands in for a "normal running"
+// async node (e.g. a real fetch/poll call) for run-abort tests — unlike
+// `mock.hang` (which ignores the signal entirely and hangs forever
+// regardless of abort, by design, for the orphaned-run scenario in
+// api-sse.test.ts), this one *is* abort-aware, exactly like ctx.poll()'s own
+// sleepCancelable (context.ts) or a real fetch(..., { signal }) would be.
+// ---------------------------------------------------------------------------
+export const mockAwaitAbortNode: NodeDefinition<Record<string, never>> = {
+  type: 'mock.awaitAbort',
+  category: 'utility',
+  title: 'Mock Await Abort',
+  inputs: {},
+  outputs: { text: { type: 'text' } },
+  paramsSchema: z.object({}),
+  execute: ({ ctx }) =>
+    new Promise((_resolve, reject) => {
+      if (ctx.signal.aborted) {
+        reject(new Error('aborted'));
+        return;
+      }
+      ctx.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    }),
+};
+
+// ---------------------------------------------------------------------------
+// mock.plan — params { value: unknown }, no input, out plan:json. Stands in
+// for `llm.selectMoments`'s output (a CutPlan-shaped json) feeding
+// `flow.approveGate` in gate tests (SPEC-step33.md §33c), without pulling in
+// the real node's OpenRouter dependency.
+// ---------------------------------------------------------------------------
+export const mockPlanNode: NodeDefinition<{ value: unknown }> = {
+  type: 'mock.plan',
+  category: 'utility',
+  title: 'Mock Plan',
+  inputs: {},
+  outputs: { plan: { type: 'json' } },
+  paramsSchema: z.object({ value: z.unknown() }),
+  execute: async ({ params }) => {
+    return { plan: params.value };
+  },
+};
+
+// ---------------------------------------------------------------------------
+// mock.echoJson — in plan:json (required), out plan:json, passthrough.
+// Downstream of `flow.approveGate` in gate tests, so tests can assert the
+// (possibly edited) plan actually reached the node after the gate node.
+// ---------------------------------------------------------------------------
+export const mockEchoJsonNode: NodeDefinition<Record<string, never>> = {
+  type: 'mock.echoJson',
+  category: 'utility',
+  title: 'Mock Echo Json',
+  inputs: { plan: { type: 'json', required: true } },
+  outputs: { plan: { type: 'json' } },
+  paramsSchema: z.object({}),
+  execute: async ({ inputs }) => {
+    return { plan: inputs.plan };
+  },
+};
+
+// ---------------------------------------------------------------------------
 // Convenience: register the stateless mock nodes (text/upper/concat/fail/
-// poller/anyIn) on a fresh registry. Stateful ones (delay/counter) are
-// created per-test via their factories since tests need fresh state.
+// poller/anyIn/plan/echoJson) on a fresh registry. Stateful ones
+// (delay/counter) are created per-test via their factories since tests need
+// fresh state.
 // ---------------------------------------------------------------------------
 export function registerBaseMocks(registry: NodeRegistry): void {
   registry.register(mockTextNode);
@@ -213,4 +275,7 @@ export function registerBaseMocks(registry: NodeRegistry): void {
   registry.register(mockFailNode);
   registry.register(mockPollerNode);
   registry.register(mockAnyInNode);
+  registry.register(mockPlanNode);
+  registry.register(mockEchoJsonNode);
+  registry.register(mockAwaitAbortNode);
 }

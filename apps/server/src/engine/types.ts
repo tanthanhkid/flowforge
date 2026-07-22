@@ -31,6 +31,15 @@ export interface ExecutionContext {
     check: () => Promise<{ done: boolean; value?: T }>,
     opts?: { initialDelayMs?: number; maxDelayMs?: number; factor?: number; timeoutMs?: number },
   ): Promise<T>;
+  /**
+   * SPEC-step33.md §33c — parks the node at NodeState 'awaiting' until a
+   * human resolves (or the run is aborted / the gate times out). Only set by
+   * `executor.ts` when the Engine was built with a `GateRegistry` (see
+   * `EngineOptions.gate`); absent in unit tests / headless runs, so a node
+   * using it (`flow.approveGate`) must feature-detect and pass through
+   * instead of calling this.
+   */
+  awaitApproval?(payload: unknown): Promise<unknown>;
 }
 
 export interface NodeDefinition<P = unknown> {
@@ -49,5 +58,5 @@ export interface NodeDefinition<P = unknown> {
   }): Promise<Record<string, PortValue>>;
 }
 
-export type NodeState = 'pending' | 'running' | 'success' | 'error' | 'skipped';
+export type NodeState = 'pending' | 'running' | 'awaiting' | 'success' | 'error' | 'skipped';
 export type RunStatus = 'running' | 'success' | 'error';
