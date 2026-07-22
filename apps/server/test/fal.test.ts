@@ -13,7 +13,7 @@ import { NodeRegistry } from '../src/engine/registry.js';
 import type { Workflow } from '../src/engine/schema.js';
 import { InMemoryRunStore } from '../src/engine/stores.js';
 import type { ExecutionContext, MediaValue } from '../src/engine/types.js';
-import { mediaToImageUrl, runFalQueue, uploadToFal } from '../src/nodes/providers/fal.js';
+import { mediaToImageUrl, putTimeoutMsForSize, runFalQueue, uploadToFal } from '../src/nodes/providers/fal.js';
 import { inputImageNode } from '../src/nodes/input.image.js';
 import { inputTextNode } from '../src/nodes/input.text.js';
 import { falImageNode, setLiveImageCatalog } from '../src/nodes/fal.image.js';
@@ -175,6 +175,47 @@ describe('mediaToImageUrl', () => {
   });
 });
 
+// Real full-pipeline smoke (76-minute video, ~13MB extracted audio) hit a
+// fixed 120_000ms PUT timeout aborting mid-transfer from a slow-uplink
+// location — `putTimeoutMsForSize` scales the budget with payload size
+// instead, still clamped to a sane floor/cap.
+describe('putTimeoutMsForSize', () => {
+  it('applies the 5-minute floor for a tiny payload', () => {
+    expect(putTimeoutMsForSize(1)).toBe(5 * 60_000);
+    expect(putTimeoutMsForSize(1_000)).toBe(5 * 60_000);
+  });
+
+  it('scales up for a mid-size payload (well under the cap)', () => {
+    // 8MB at the assumed 15KB/s floor -> ~9.3min: above the 5min floor and
+    // below the 15min cap -> the scaled value is used as-is.
+    const eightMb = 8 * 1024 * 1024;
+    const timeout = putTimeoutMsForSize(eightMb);
+    expect(timeout).toBeGreaterThan(5 * 60_000);
+    expect(timeout).toBeLessThan(15 * 60_000);
+    expect(timeout).toBe(Math.ceil((eightMb / 15_000) * 1000));
+  });
+
+  it('a real-world 13MB payload (the smoke-test failure size) gets a generous multi-minute budget, at/above the old fixed 120s', () => {
+    const thirteenMb = 13 * 1024 * 1024;
+    const timeout = putTimeoutMsForSize(thirteenMb);
+    expect(timeout).toBeGreaterThanOrEqual(5 * 60_000);
+    expect(timeout).toBeLessThanOrEqual(15 * 60_000);
+  });
+
+  it('applies the 15-minute cap for a very large payload', () => {
+    const hugePayload = 500 * 1024 * 1024; // 500MB
+    expect(putTimeoutMsForSize(hugePayload)).toBe(15 * 60_000);
+  });
+
+  it('is monotonically non-decreasing with size', () => {
+    const small = putTimeoutMsForSize(1024);
+    const medium = putTimeoutMsForSize(5 * 1024 * 1024);
+    const large = putTimeoutMsForSize(50 * 1024 * 1024);
+    expect(small).toBeLessThanOrEqual(medium);
+    expect(medium).toBeLessThanOrEqual(large);
+  });
+});
+
 // SPEC-step33.md §33a — `uploadToFal` (fal storage upload: initiate -> PUT
 // -> file_url), used by `video.transcribe` to hand fal.ai's queue API a
 // real URL for a multi-MB audio file instead of a base64 data URI.
@@ -214,6 +255,38 @@ describe('uploadToFal', () => {
     expect(capturedInitiateHeaders?.Authorization).toBe('Key test-fal-key-id:test-fal-key-secret');
     expect(capturedPutBody).toBe(bytes);
     expect(capturedPutHeaders?.['Content-Type']).toBe('audio/mpeg');
+  });
+
+  it('logs the upload size (MB) and the size-scaled PUT timeout (seconds) before the PUT', async () => {
+    // 13MB, matching the real full-pipeline smoke that surfaced the fixed
+    // 120s timeout being too aggressive.
+    const bytes = Buffer.alloc(13 * 1024 * 1024, 1);
+    const logs: string[] = [];
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === 'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3' && method === 'POST') {
+        return jsonResponse(200, {
+          file_url: 'https://cdn.fal.ai/files/uploaded-audio.mp3',
+          upload_url: 'https://storage.fal.ai/upload/signed-put-url',
+        });
+      }
+      if (url === 'https://storage.fal.ai/upload/signed-put-url' && method === 'PUT') {
+        return { ok: true, status: 200, text: async () => '' } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx({ log: (message: string) => logs.push(message) });
+    await uploadToFal(bytes, 'audio.mp3', 'audio/mpeg', ctx);
+
+    const expectedTimeoutSec = Math.round(putTimeoutMsForSize(bytes.length) / 1000);
+    const logLine = logs.find((l) => l.startsWith('[fal.upload]'));
+    expect(logLine).toBeDefined();
+    expect(logLine).toContain('13.0MB');
+    expect(logLine).toContain(`${expectedTimeoutSec}s`);
   });
 
   it('throws a clear error when initiate fails (HTTP error)', async () => {

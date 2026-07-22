@@ -148,6 +148,32 @@ function wrapFalStorageError(err: unknown, step: string): Error {
   return err instanceof Error ? new Error(`fal.ai (storage upload — ${step}): ${err.message}`) : new Error(String(err));
 }
 
+const PUT_TIMEOUT_FLOOR_MS = 5 * 60_000;
+const PUT_TIMEOUT_CAP_MS = 15 * 60_000;
+// Conservative assumed upload throughput floor (bytes/sec) used to scale the
+// PUT timeout below — deliberately pessimistic (real-world observed: a
+// 76-minute video's ~13MB extracted audio upload took long enough from a
+// slow-uplink location that the old fixed 120_000ms timeout aborted it
+// mid-transfer).
+const PUT_TIMEOUT_BYTES_PER_SEC = 15_000;
+
+/**
+ * Size-scaled PUT timeout (ms) for `uploadToFal`'s storage upload: a fixed
+ * timeout (previously 120_000ms) is fine for a small image but aborts a
+ * legitimate multi-MB `video.transcribe` audio upload over a slow uplink
+ * before it finishes. Scales with `byteLength` assuming a conservative
+ * ~15KB/s floor, clamped to [5min, 15min] so a tiny payload still gets a
+ * generous minimum guard and a huge one doesn't wait unboundedly.
+ */
+export function putTimeoutMsForSize(byteLength: number): number {
+  // byteLength / PUT_TIMEOUT_BYTES_PER_SEC = seconds at the conservative
+  // floor rate; * 1000 to get ms (NOT `byteLength / 15_000` directly — that
+  // would silently be a bytes/ms rate, i.e. 15MB/s, nowhere near
+  // "conservative").
+  const scaled = Math.ceil((byteLength / PUT_TIMEOUT_BYTES_PER_SEC) * 1000);
+  return Math.min(PUT_TIMEOUT_CAP_MS, Math.max(PUT_TIMEOUT_FLOOR_MS, scaled));
+}
+
 /**
  * Uploads `data` to fal.ai's storage so a large binary (e.g. the audio
  * extracted for `video.transcribe`, SPEC-step33.md §33a) can be passed to a
@@ -210,12 +236,20 @@ export async function uploadToFal(
     // hanging forever — requestJson()'s fetchWithTimeout gives every other
     // call in this file that same guarantee, but this raw `fetch` (the PUT
     // response usually isn't JSON, so requestJson doesn't fit) needs its
-    // own. 120s is generous for a multi-MB audio/video upload.
+    // own. A FIXED timeout here is wrong: `video.transcribe`'s extracted
+    // audio for a long source video can be tens of MB, and a real
+    // full-pipeline smoke (76-minute video, ~13MB audio) hit exactly this —
+    // the upload legitimately took longer than a flat 120s from a
+    // slow-uplink location. `putTimeoutMsForSize` scales the budget with
+    // payload size instead (floor/cap still guard a truly stalled
+    // connection either way).
+    const putTimeoutMs = putTimeoutMsForSize(data.length);
+    ctx.log(`[fal.upload] PUT ${(data.length / (1024 * 1024)).toFixed(1)}MB (timeout ${Math.round(putTimeoutMs / 1000)}s)`);
     const res = await fetch(uploadUrl, {
       method: 'PUT',
       headers: { 'Content-Type': contentType },
       body: data,
-      signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(120_000)]),
+      signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(putTimeoutMs)]),
     });
     if (!res.ok) {
       const bodySnippet = (await res.text().catch(() => '')).slice(0, 300);
