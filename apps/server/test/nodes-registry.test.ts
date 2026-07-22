@@ -21,10 +21,12 @@ const EXPECTED_TYPES = [
   'video.transcribe',
   'llm.selectMoments',
   'flow.approveGate',
+  'broll.generate',
+  'video.assembleShort',
 ];
 
 describe('createDefaultRegistry', () => {
-  it('registers exactly the 16 node types (9 MVP + step10 input.image/pdf/markdown + step12 video.compose + step33 video.transcribe/llm.selectMoments/flow.approveGate)', () => {
+  it('registers exactly the 18 node types (9 MVP + step10 input.image/pdf/markdown + step12 video.compose + step33 video.transcribe/llm.selectMoments/flow.approveGate/broll.generate/video.assembleShort)', () => {
     const registry = createDefaultRegistry();
     const types = registry.list().map((def) => def.type).sort();
     expect(types).toEqual([...EXPECTED_TYPES].sort());

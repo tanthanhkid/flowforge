@@ -1,13 +1,15 @@
 /**
- * Node registration (SPEC-step2.md §7): wires all 16 node types onto a
+ * Node registration (SPEC-step2.md §7): wires all 18 node types onto a
  * NodeRegistry (13 through SPEC-step32.md, `video.transcribe` added by
  * SPEC-step33.md §33a, `llm.selectMoments` added by SPEC-step33.md §33b,
- * `flow.approveGate` added by SPEC-step33.md §33c).
+ * `flow.approveGate` added by SPEC-step33.md §33c, `broll.generate` +
+ * `video.assembleShort` added by SPEC-step33.md §33d).
  * `createDefaultRegistry()` is the one-liner the server/agent layer and
  * scripts reach for; `registerAllNodes()` is exposed separately so tests
  * can register onto a registry that already has mock nodes on it.
  */
 import { NodeRegistry } from '../engine/registry.js';
+import { brollGenerateNode } from './broll.generate.js';
 import { falImageNode } from './fal.image.js';
 import { falVideoNode } from './fal.video.js';
 import { flowApproveGateNode } from './flow.approveGate.js';
@@ -22,6 +24,7 @@ import { llmTransformNode } from './llm.transform.js';
 import { outputCollectNode } from './output.collect.js';
 import { textTemplateNode } from './text.template.js';
 import { vbeeTtsNode } from './vbee.tts.js';
+import { videoAssembleShortNode } from './video.assembleShort.js';
 import { videoComposeNode } from './video.compose.js';
 import { videoTranscribeNode } from './video.transcribe.js';
 
@@ -42,6 +45,8 @@ export function registerAllNodes(registry: NodeRegistry): void {
   registry.register(videoComposeNode);
   registry.register(videoTranscribeNode);
   registry.register(flowApproveGateNode);
+  registry.register(brollGenerateNode);
+  registry.register(videoAssembleShortNode);
 }
 
 export function createDefaultRegistry(): NodeRegistry {
@@ -51,6 +56,7 @@ export function createDefaultRegistry(): NodeRegistry {
 }
 
 export {
+  brollGenerateNode,
   falImageNode,
   falVideoNode,
   flowApproveGateNode,
@@ -65,6 +71,7 @@ export {
   outputCollectNode,
   textTemplateNode,
   vbeeTtsNode,
+  videoAssembleShortNode,
   videoComposeNode,
   videoTranscribeNode,
 };

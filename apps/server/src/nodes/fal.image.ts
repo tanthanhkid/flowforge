@@ -5,47 +5,16 @@
  */
 import { z } from 'zod';
 import { downloadBinary } from '../lib/http.js';
-import { FAL_IMAGE_MODELS } from '../catalog/falModels.js';
-import type { CatalogFalEntry } from '../catalog/live/types.js';
 import type { MediaValue, NodeDefinition } from '../engine/types.js';
+import { findImageKind, setLiveImageCatalog, suggestI2IModels } from './falImageKind.js';
 import { mediaToImageUrl, runFalQueue } from './providers/fal.js';
 
-/**
- * Pushed by `routes/modelCatalog.ts` after every `getCatalog()`/
- * `refreshCatalog()` call (SPEC-step29.md §3, mirroring `fal.video.ts`'s
- * `setFalVideoLiveCatalog`) so the t2i/i2i guard below also recognizes
- * fal.ai image models outside the static preset list. `undefined` (the
- * default, and what every test that never calls this keeps getting) -> the
- * guard falls back to static-preset-only knowledge.
- */
-let liveImageCatalog: CatalogFalEntry[] | undefined;
-
-export function setLiveImageCatalog(entries: CatalogFalEntry[] | undefined): void {
-  liveImageCatalog = entries;
-}
-
-/** Static preset first, then the live-merged catalog snapshot (if pushed) — undefined means truly unknown to both (custom/uncatalogued model ids are left alone, same rationale as `fal.video.ts`'s `findKind`). */
-function findImageKind(modelId: string): 't2i' | 'i2i' | undefined {
-  const preset = FAL_IMAGE_MODELS.find((m) => m.id === modelId);
-  if (preset?.imageKind) return preset.imageKind;
-  return liveImageCatalog?.find((m) => m.id === modelId)?.imageKind;
-}
-
-/**
- * SPEC-step29.md §3 — up to 2 `imageKind === 'i2i'` suggestions for the
- * guard's error message. Unlike `fal.video.ts`'s same-family-prefix
- * heuristic, the image family doesn't name t2i/i2i siblings as path pairs,
- * so this just takes the first matches from: static presets first (in their
- * declared 💎/✅/💸 tier order), then the live-merged catalog snapshot
- * (already tier/featured/newest-sorted by `catalog/live/merge.ts`). Empty
- * when neither has one — the caller then omits the suggestion clause.
- */
-function suggestI2IModels(): string[] {
-  const presetMatches = FAL_IMAGE_MODELS.filter((m) => m.imageKind === 'i2i').map((m) => m.id);
-  if (presetMatches.length > 0) return presetMatches.slice(0, 2);
-  const liveMatches = liveImageCatalog?.filter((m) => m.imageKind === 'i2i').map((m) => m.id) ?? [];
-  return liveMatches.slice(0, 2);
-}
+// `findImageKind`/`suggestI2IModels`/`setLiveImageCatalog` moved to
+// `falImageKind.ts` (SPEC-step33.md §33d "Guard extraction") so
+// `broll.generate` can reuse them for its own (opposite-direction) guard.
+// Re-exported here so existing callers/tests (`import { setLiveImageCatalog }
+// from './fal.image.js'`) keep working unchanged.
+export { setLiveImageCatalog };
 
 const ParamsSchema = z.object({
   modelId: z.string().default('fal-ai/flux/dev'),
