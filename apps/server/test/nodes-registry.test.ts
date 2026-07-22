@@ -18,10 +18,11 @@ const EXPECTED_TYPES = [
   'fal.video',
   'vbee.tts',
   'video.compose',
+  'video.transcribe',
 ];
 
 describe('createDefaultRegistry', () => {
-  it('registers exactly the 13 node types (9 MVP + step10 input.image/pdf/markdown + step12 video.compose)', () => {
+  it('registers exactly the 14 node types (9 MVP + step10 input.image/pdf/markdown + step12 video.compose + step33 video.transcribe)', () => {
     const registry = createDefaultRegistry();
     const types = registry.list().map((def) => def.type).sort();
     expect(types).toEqual([...EXPECTED_TYPES].sort());

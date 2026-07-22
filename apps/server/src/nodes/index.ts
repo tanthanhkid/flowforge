@@ -1,8 +1,10 @@
 /**
- * Node registration (SPEC-step2.md §7): wires all 9 MVP node types onto a
- * NodeRegistry. `createDefaultRegistry()` is the one-liner the server/agent
- * layer and scripts reach for; `registerAllNodes()` is exposed separately so
- * tests can register onto a registry that already has mock nodes on it.
+ * Node registration (SPEC-step2.md §7): wires all 14 node types onto a
+ * NodeRegistry (13 through SPEC-step32.md, `video.transcribe` added by
+ * SPEC-step33.md §33a). `createDefaultRegistry()` is the one-liner the
+ * server/agent layer and scripts reach for; `registerAllNodes()` is exposed
+ * separately so tests can register onto a registry that already has mock
+ * nodes on it.
  */
 import { NodeRegistry } from '../engine/registry.js';
 import { falImageNode } from './fal.image.js';
@@ -18,6 +20,7 @@ import { outputCollectNode } from './output.collect.js';
 import { textTemplateNode } from './text.template.js';
 import { vbeeTtsNode } from './vbee.tts.js';
 import { videoComposeNode } from './video.compose.js';
+import { videoTranscribeNode } from './video.transcribe.js';
 
 export function registerAllNodes(registry: NodeRegistry): void {
   registry.register(inputTextNode);
@@ -33,6 +36,7 @@ export function registerAllNodes(registry: NodeRegistry): void {
   registry.register(falVideoNode);
   registry.register(vbeeTtsNode);
   registry.register(videoComposeNode);
+  registry.register(videoTranscribeNode);
 }
 
 export function createDefaultRegistry(): NodeRegistry {
@@ -55,4 +59,5 @@ export {
   textTemplateNode,
   vbeeTtsNode,
   videoComposeNode,
+  videoTranscribeNode,
 };

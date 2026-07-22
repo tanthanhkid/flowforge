@@ -122,6 +122,104 @@ export async function runFalQueue(args: RunFalQueueArgs): Promise<any> {
   }
 }
 
+interface FalStorageInitiateResponse {
+  file_url?: string;
+  upload_url?: string;
+}
+
+/** Same shape as `wrapFalError` but for storage-upload calls, which aren't
+ * tied to a `modelId` — avoids the misleading `(model "...")` wording. */
+function wrapFalStorageError(err: unknown, step: string): Error {
+  if (err instanceof HttpError) {
+    return new Error(`fal.ai (storage upload — ${step}) failed: HTTP ${err.status ?? '?'} — ${err.bodySnippet ?? ''}`);
+  }
+  return err instanceof Error ? new Error(`fal.ai (storage upload — ${step}): ${err.message}`) : new Error(String(err));
+}
+
+/**
+ * Uploads `data` to fal.ai's storage so a large binary (e.g. the audio
+ * extracted for `video.transcribe`, SPEC-step33.md §33a) can be passed to a
+ * queue model as a `*_url` field instead of a giant base64 data URI (which
+ * `mediaToImageUrl` uses for small images but is unreliable/too large for
+ * multi-MB audio/video).
+ *
+ * Endpoint sourced from fal's storage REST API (the `fal-ai` skill installed
+ * in this session only covers the CLI/image/video flows and embeds local
+ * files as base64 data URIs — it does not document a raw HTTP upload
+ * endpoint — so this follows the canonical `@fal-ai/client` SDK source
+ * (`libs/client/src/storage.ts`): `getRestApiUrl()` resolves to
+ * `https://rest.fal.ai`, and the initiate call always appends
+ * `?storage_type=fal-cdn-v3` (the SDK's own comment: "We want to test V3
+ * without making it the default at the API level" — i.e. omitting the
+ * query param opts into a legacy/deprecated default whose `file_url` may
+ * not be fetchable by fal's queue workers). `POST
+ * /storage/upload/initiate?storage_type=fal-cdn-v3` returns `{ file_url,
+ * upload_url }`; the caller then `PUT`s the raw bytes to `upload_url` with
+ * `Content-Type` set to the real mime type, after which `file_url` is a
+ * fetchable/public URL usable as e.g. `audio_url`. Auth via the same
+ * `Authorization: Key <FAL_KEY>` header as `runFalQueue`.
+ *
+ * Single-`PUT` only (no multipart) — fine up to fal's ~90MB single-part
+ * ceiling (the SDK itself switches to multipart above that); good enough
+ * for MVP audio/video sizes, revisit if that ceiling is ever hit.
+ */
+export async function uploadToFal(
+  data: Buffer,
+  filename: string,
+  contentType: string,
+  ctx: ExecutionContext,
+): Promise<string> {
+  const apiKey = getEnv('FAL_KEY');
+  const headers = { Authorization: `Key ${apiKey}`, 'Content-Type': 'application/json' };
+
+  let initiateJson: FalStorageInitiateResponse;
+  try {
+    const { json } = await requestJson<FalStorageInitiateResponse>({
+      url: 'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3',
+      method: 'POST',
+      headers,
+      body: { content_type: contentType, file_name: filename },
+      timeoutMs: 60_000,
+      retries: 2,
+      signal: ctx.signal,
+    });
+    initiateJson = json;
+  } catch (err) {
+    throw wrapFalStorageError(err, 'initiate');
+  }
+
+  const { file_url: fileUrl, upload_url: uploadUrl } = initiateJson;
+  if (!fileUrl || !uploadUrl) {
+    throw new Error('fal.ai (storage upload): phản hồi initiate thiếu file_url/upload_url.');
+  }
+
+  try {
+    // AbortSignal.timeout(...) guards against a stalled PUT connection
+    // hanging forever — requestJson()'s fetchWithTimeout gives every other
+    // call in this file that same guarantee, but this raw `fetch` (the PUT
+    // response usually isn't JSON, so requestJson doesn't fit) needs its
+    // own. 120s is generous for a multi-MB audio/video upload.
+    const res = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': contentType },
+      body: data,
+      signal: AbortSignal.any([ctx.signal, AbortSignal.timeout(120_000)]),
+    });
+    if (!res.ok) {
+      const bodySnippet = (await res.text().catch(() => '')).slice(0, 300);
+      throw new HttpError(`PUT ${uploadUrl} failed: HTTP ${res.status} — ${bodySnippet}`, {
+        status: res.status,
+        url: uploadUrl,
+        bodySnippet,
+      });
+    }
+  } catch (err) {
+    throw wrapFalStorageError(err, 'PUT');
+  }
+
+  return fileUrl;
+}
+
 const MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
   jpg: 'image/jpeg',

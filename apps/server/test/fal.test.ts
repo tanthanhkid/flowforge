@@ -13,7 +13,7 @@ import { NodeRegistry } from '../src/engine/registry.js';
 import type { Workflow } from '../src/engine/schema.js';
 import { InMemoryRunStore } from '../src/engine/stores.js';
 import type { ExecutionContext, MediaValue } from '../src/engine/types.js';
-import { mediaToImageUrl, runFalQueue } from '../src/nodes/providers/fal.js';
+import { mediaToImageUrl, runFalQueue, uploadToFal } from '../src/nodes/providers/fal.js';
 import { inputImageNode } from '../src/nodes/input.image.js';
 import { inputTextNode } from '../src/nodes/input.text.js';
 import { falImageNode, setLiveImageCatalog } from '../src/nodes/fal.image.js';
@@ -172,6 +172,97 @@ describe('mediaToImageUrl', () => {
     } finally {
       rmSync(tmp, { recursive: true, force: true });
     }
+  });
+});
+
+// SPEC-step33.md §33a — `uploadToFal` (fal storage upload: initiate -> PUT
+// -> file_url), used by `video.transcribe` to hand fal.ai's queue API a
+// real URL for a multi-MB audio file instead of a base64 data URI.
+describe('uploadToFal', () => {
+  it('POSTs initiate with Authorization + content_type/file_name, PUTs the bytes to upload_url, and returns file_url', async () => {
+    const bytes = Buffer.from([1, 2, 3, 4]);
+    let capturedInitiateBody: unknown;
+    let capturedInitiateHeaders: Record<string, string> | undefined;
+    let capturedPutBody: unknown;
+    let capturedPutHeaders: Record<string, string> | undefined;
+
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === 'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3' && method === 'POST') {
+        capturedInitiateBody = JSON.parse(init?.body as string);
+        capturedInitiateHeaders = init?.headers as Record<string, string>;
+        return jsonResponse(200, {
+          file_url: 'https://cdn.fal.ai/files/uploaded-audio.mp3',
+          upload_url: 'https://storage.fal.ai/upload/signed-put-url',
+        });
+      }
+      if (url === 'https://storage.fal.ai/upload/signed-put-url' && method === 'PUT') {
+        capturedPutBody = init?.body;
+        capturedPutHeaders = init?.headers as Record<string, string>;
+        return { ok: true, status: 200, text: async () => '' } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    const url = await uploadToFal(bytes, 'audio.mp3', 'audio/mpeg', ctx);
+
+    expect(url).toBe('https://cdn.fal.ai/files/uploaded-audio.mp3');
+    expect(capturedInitiateBody).toEqual({ content_type: 'audio/mpeg', file_name: 'audio.mp3' });
+    expect(capturedInitiateHeaders?.Authorization).toBe('Key test-fal-key-id:test-fal-key-secret');
+    expect(capturedPutBody).toBe(bytes);
+    expect(capturedPutHeaders?.['Content-Type']).toBe('audio/mpeg');
+  });
+
+  it('throws a clear error when initiate fails (HTTP error)', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse(401, { error: 'bad key' })) as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    await expect(uploadToFal(Buffer.from([1]), 'x.mp3', 'audio/mpeg', ctx)).rejects.toThrow(/storage upload/);
+  });
+
+  it('throws a clear error when initiate response is missing file_url/upload_url', async () => {
+    globalThis.fetch = vi.fn(async () => jsonResponse(200, {})) as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    await expect(uploadToFal(Buffer.from([1]), 'x.mp3', 'audio/mpeg', ctx)).rejects.toThrow(/file_url/);
+  });
+
+  it('throws a clear error when the PUT upload fails', async () => {
+    const fetchMock = vi.fn(async (input: unknown, init?: RequestInit) => {
+      const url = String(input);
+      const method = init?.method ?? 'GET';
+      if (url === 'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3' && method === 'POST') {
+        return jsonResponse(200, { file_url: 'https://cdn.fal.ai/files/x.mp3', upload_url: 'https://storage.fal.ai/put' });
+      }
+      if (url === 'https://storage.fal.ai/put' && method === 'PUT') {
+        return { ok: false, status: 500, text: async () => 'server error' } as unknown as Response;
+      }
+      throw new Error(`unexpected fetch url in test: ${url}`);
+    });
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+
+    const ctx = makeCtx();
+    await expect(uploadToFal(Buffer.from([1]), 'x.mp3', 'audio/mpeg', ctx)).rejects.toThrow(/storage upload/);
+  });
+
+  it('respects abort (ctx.signal) during the initiate call', async () => {
+    const controller = new AbortController();
+    const ctx = makeCtx({ signal: controller.signal });
+    controller.abort();
+
+    globalThis.fetch = vi.fn(async (_input: unknown, init?: RequestInit) => {
+      if (init?.signal?.aborted) {
+        const err = new Error('The operation was aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+      return jsonResponse(200, {});
+    }) as unknown as typeof fetch;
+
+    await expect(uploadToFal(Buffer.from([1]), 'x.mp3', 'audio/mpeg', ctx)).rejects.toThrow();
   });
 });
 
