@@ -18,6 +18,8 @@ export type EnvKey =
   | 'OPENROUTER_DEFAULT_MODEL'
   | 'OPENROUTER_BASE_URL'
   | 'FAL_KEY'
+  | 'FAL_QUEUE_BASE_URL'
+  | 'FAL_REST_BASE_URL'
   | 'VBEE_APP_ID'
   | 'VBEE_TOKEN';
 
@@ -29,6 +31,12 @@ const DEFAULTS: Partial<Record<EnvKey, string>> = {
   // zero cost. Production/dev/real-tier e2e never set this, so
   // `openrouter.ts` keeps hitting the real `https://openrouter.ai/api/v1`.
   OPENROUTER_BASE_URL: 'https://openrouter.ai/api/v1',
+  // SPEC-step33.md §33e-2 — same additive rationale as OPENROUTER_BASE_URL
+  // above, for `nodes/providers/fal.ts`'s queue-submit/status/response URLs
+  // (only e2e's free-tier `e2e/mock-fal.ts` ever overrides this).
+  FAL_QUEUE_BASE_URL: 'https://queue.fal.run',
+  // Same rationale, for fal.ts's storage-upload (`uploadToFal`) REST host.
+  FAL_REST_BASE_URL: 'https://rest.fal.ai',
 };
 
 /**

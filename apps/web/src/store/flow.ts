@@ -8,6 +8,7 @@ import * as api from '../api/client.ts';
 import { ApiError } from '../api/client.ts';
 import type {
   CostEstimate,
+  CutPlan,
   NodeRunRecord,
   NodeSpec,
   NodeState,
@@ -65,6 +66,15 @@ export interface FlowState {
   runId?: string;
   runStatus?: RunStatus;
   nodeRuns: Record<string, NodeRunUiState>;
+  /**
+   * SPEC-step33.md §33e-1 — set while a node is parked in the `'awaiting'`
+   * state (a human-in-the-loop `CutPlan` review gate, server 33c): the run
+   * that's paused, which node it's paused at, and the plan to review/edit.
+   * `null` whenever no gate is currently pending (the common case). Cleared
+   * on a terminal `run:state` (success/error) and after a successful
+   * `resumeAwaiting`/`cancelAwaiting`.
+   */
+  awaitingGate: { runId: string; nodeId: string; plan: CutPlan } | null;
   dirty: boolean;
   validationIssues: ValidationIssue[];
   /**
@@ -242,6 +252,22 @@ export interface FlowState {
    * lets the user open that run explicitly if they want to see it.
    */
   ensureLatestRunLoaded(): Promise<void>;
+  /**
+   * SPEC-step33.md §33e-1 — approves (possibly human-edited) `awaitingGate`
+   * and resumes the paused run. Throws (leaving `awaitingGate` untouched,
+   * matching how `run()`'s own createRun-rejection path works above) on a
+   * 400 shape-invalid plan or a 409 stale gate — `CutPlanReview.tsx` shows
+   * the message inline rather than this store silent-failing it. Clears
+   * `awaitingGate` only after the server confirms the resume.
+   */
+  resumeAwaiting(plan: CutPlan): Promise<void>;
+  /**
+   * SPEC-step33.md §33e-1 — "Huỷ": aborts the paused run entirely (server
+   * `/stop`) rather than resuming it. Clears `awaitingGate` unconditionally
+   * once the request settles — even a 409 ("already not active") means
+   * there's nothing left to keep waiting on.
+   */
+  cancelAwaiting(): Promise<void>;
   /** Not from spec §3's action list verbatim — backs the Toolbar's Validate button (spec §4). */
   validate(): Promise<boolean>;
   /** See `costEstimate` above. Silent-fails (leaves the previous estimate in place) on any error. */
@@ -368,6 +394,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
   runId: undefined,
   runStatus: undefined,
   nodeRuns: {},
+  awaitingGate: null,
   dirty: false,
   validationIssues: [],
   forceNodeIds: [],
@@ -402,6 +429,10 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       runId: undefined,
       runStatus: undefined,
       nodeRuns: {},
+      // Post-review fix (HIGH) — a gate parked on the workflow being left
+      // behind must not keep `CutPlanReview`'s full-canvas overlay up over
+      // the new (empty) one.
+      awaitingGate: null,
       dirty: false,
       validationIssues: [],
       forceNodeIds: [],
@@ -418,6 +449,11 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       runId: undefined,
       runStatus: undefined,
       nodeRuns: {},
+      // Post-review fix (HIGH) — same reasoning as `newWorkflow` above:
+      // switching conversation/workflow must drop any gate left over from
+      // whatever workflow was previously loaded (its run is no longer
+      // being displayed, so its gate has no business staying on-screen).
+      awaitingGate: null,
       dirty: false,
       validationIssues: [],
       forceNodeIds: [],
@@ -668,7 +704,7 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     }
 
     stopActiveRunSubscription();
-    set({ runId, runStatus: 'running', nodeRuns: {}, validationIssues: [] });
+    set({ runId, runStatus: 'running', nodeRuns: {}, validationIssues: [], awaitingGate: null });
 
     // The store's `runId` can change while this stream is still open — the
     // user can click an older run in RunsPanel (openRun) while this one is
@@ -689,7 +725,30 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
         for (const rec of data.nodes) {
           nodeRuns[rec.nodeId] = nodeRunFromRecord(rec);
         }
-        set({ runStatus: data.run.status, nodeRuns });
+        set((state) => {
+          // Post-review fix (MEDIUM) — SPEC-step33.md §33e requires
+          // surviving a reconnect mid-gate: EventSource auto-reconnects on
+          // any network blip (a gate can sit open up to 30 min waiting on
+          // a human), and a fresh connection replays `snapshot`, NOT the
+          // original `node:state` — so this is the only event a
+          // reconnected client is guaranteed to see for an already-open
+          // gate. Only set it from here when nothing is already tracked
+          // for this run (a snapshot naturally repeats on every
+          // reconnect; it must not re-derive/clobber an `awaitingGate` a
+          // user is actively mid-edit on from the *original* `node:state`
+          // or the very same fallback below).
+          const awaitingRec = data.nodes.find((rec) => rec.state === 'awaiting');
+          const alreadyTracked = state.awaitingGate?.runId === runId;
+          if (!awaitingRec || alreadyTracked) {
+            return { runStatus: data.run.status, nodeRuns };
+          }
+          const plan = (awaitingRec.outputs?.pendingApproval as { plan?: CutPlan } | undefined)?.plan;
+          return {
+            runStatus: data.run.status,
+            nodeRuns,
+            ...(plan ? { awaitingGate: { runId, nodeId: awaitingRec.nodeId, plan } } : {}),
+          };
+        });
       },
       onNodeState: (data) => {
         if (!isDisplayed()) return;
@@ -702,6 +761,28 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
             },
           };
         });
+        // SPEC-step33.md §33e-1 — the event usually carries the plan
+        // directly (`pendingApproval`, server 33c); fall back to a full
+        // `getRun` (the node's `outputs.pendingApproval.plan`) only for the
+        // case where THIS event itself is missing the payload. Surviving a
+        // dropped-connection reconnect mid-gate is a separate case, handled
+        // by `onSnapshot` above (a reconnect replays `snapshot`, not this
+        // event).
+        if (data.state === 'awaiting') {
+          const fromEvent = data.pendingApproval?.plan;
+          if (fromEvent) {
+            set({ awaitingGate: { runId, nodeId: data.nodeId, plan: fromEvent } });
+          } else {
+            void api.getRun(runId).then((snapshot) => {
+              if (!isDisplayed()) return;
+              const rec = snapshot.nodes.find((n) => n.nodeId === data.nodeId);
+              const plan = (rec?.outputs?.pendingApproval as { plan?: CutPlan } | undefined)?.plan;
+              if (plan) {
+                set({ awaitingGate: { runId, nodeId: data.nodeId, plan } });
+              }
+            });
+          }
+        }
       },
       onNodeLog: (data) => {
         if (!isDisplayed()) return;
@@ -717,7 +798,11 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       },
       onRunState: (data) => {
         if (!isDisplayed()) return;
-        set({ runStatus: data.status });
+        // SPEC-step33.md §33e-1 — a terminal status means whatever gate was
+        // pending (if any — `stopRun` while awaiting lands here too) is
+        // moot; a resume instead moves the engine back to `'running'` and a
+        // *later* node:state may open a fresh gate.
+        set({ runStatus: data.status, ...(data.status === 'running' ? {} : { awaitingGate: null }) });
       },
       onDone: () => {
         // The server always ends the SSE response right after `done`
@@ -758,6 +843,14 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
       runStatus: snapshot.run.status,
       nodeRuns,
       rightTab: opts?.switchTab === false ? state.rightTab : 'results',
+      // Post-review fix (HIGH) — `openRun` loads a *static* snapshot; it
+      // never subscribes to SSE, so it can never itself observe a fresh
+      // gate opening. Whatever `awaitingGate` was pending before this call
+      // belonged to a run this view is about to stop showing (either a
+      // just-finished live run whose `run()` handler already cleared it,
+      // or the user jumping to a different/historical run from RunsPanel)
+      // — either way it must not survive into the run now being displayed.
+      awaitingGate: null,
     }));
   },
 
@@ -781,6 +874,34 @@ export const useFlowStore = create<FlowState>()((set, get) => ({
     } catch {
       // Silent fail (mirrors refreshEstimate above) — ResultsPanel just
       // keeps showing its "Chưa có run nào" placeholder.
+    }
+  },
+
+  async resumeAwaiting(plan) {
+    const gate = get().awaitingGate;
+    if (!gate) return;
+    // Let a 400 (bad plan shape) / 409 (stale gate) propagate to the
+    // caller (CutPlanReview) rather than swallowing it here — matches
+    // `run()`'s own createRun-rejection handling above, which also leaves
+    // state untouched and lets the caller decide what to show.
+    await api.resumeRun(gate.runId, gate.nodeId, plan);
+    set({ awaitingGate: null });
+  },
+
+  async cancelAwaiting() {
+    const gate = get().awaitingGate;
+    if (!gate) return;
+    try {
+      await api.stopRun(gate.runId);
+    } catch {
+      // Swallowed deliberately (mirrors `refreshEstimate`/
+      // `ensureLatestRunLoaded` above): a 404/409 ("already not active")
+      // still means there's nothing left worth staying gated on, and
+      // `CutPlanReview`'s "Huỷ" isn't wired to show an inline error the way
+      // "Duyệt & cắt" is (see `resumeAwaiting`, which deliberately doesn't
+      // swallow).
+    } finally {
+      set({ awaitingGate: null });
     }
   },
 

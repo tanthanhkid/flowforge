@@ -1,0 +1,58 @@
+{
+  "version": 1,
+  "id": "sample-video-to-short",
+  "name": "🎬 Video dài → Short + B-roll",
+  "nodes": [
+    {
+      "id": "src",
+      "type": "input.file",
+      "params": { "path": "uploads/sample-talk.mp4" },
+      "position": { "x": 0, "y": 0 }
+    },
+    {
+      "id": "transcribe",
+      "type": "video.transcribe",
+      "params": {},
+      "position": { "x": 300, "y": 0 }
+    },
+    {
+      "id": "moments",
+      "type": "llm.selectMoments",
+      "params": { "model": "", "maxMoments": 2 },
+      "position": { "x": 600, "y": 0 }
+    },
+    {
+      "id": "gate",
+      "type": "flow.approveGate",
+      "params": {},
+      "position": { "x": 900, "y": 0 }
+    },
+    {
+      "id": "broll",
+      "type": "broll.generate",
+      "params": { "model": "fal-ai/flux/schnell" },
+      "position": { "x": 1200, "y": 0 }
+    },
+    {
+      "id": "assemble",
+      "type": "video.assembleShort",
+      "params": {},
+      "position": { "x": 1500, "y": 0 }
+    },
+    {
+      "id": "out",
+      "type": "output.collect",
+      "params": {},
+      "position": { "x": 1800, "y": 0 }
+    }
+  ],
+  "edges": [
+    { "id": "e1", "from": { "node": "src", "port": "file" }, "to": { "node": "transcribe", "port": "video" } },
+    { "id": "e2", "from": { "node": "transcribe", "port": "segments" }, "to": { "node": "moments", "port": "segments" } },
+    { "id": "e3", "from": { "node": "moments", "port": "plan" }, "to": { "node": "gate", "port": "plan" } },
+    { "id": "e4", "from": { "node": "gate", "port": "plan" }, "to": { "node": "broll", "port": "plan" } },
+    { "id": "e5", "from": { "node": "broll", "port": "plan" }, "to": { "node": "assemble", "port": "plan" } },
+    { "id": "e6", "from": { "node": "src", "port": "file" }, "to": { "node": "assemble", "port": "video" } },
+    { "id": "e7", "from": { "node": "assemble", "port": "video" }, "to": { "node": "out", "port": "in1" } }
+  ]
+}

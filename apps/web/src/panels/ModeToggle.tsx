@@ -8,6 +8,7 @@
  * state, never fighting each other.
  */
 import { layoutModeFromRatio, useChatStore, type LayoutMode } from '../store/chat.ts';
+import { useFlowStore } from '../store/flow.ts';
 
 const MODES: ReadonlyArray<{ key: LayoutMode; label: string; ratio: number; testId: string }> = [
   { key: 'chat', label: 'Chat', ratio: 1, testId: 'mode-chat' },
@@ -26,6 +27,13 @@ export function ModeToggle() {
   // user would have no way to know a reply is on its way until they
   // happen to reopen chat themselves.
   const showStreamingBadge = turnState === 'streaming' && mode === 'canvas';
+
+  // SPEC-step33.md §33e-1 — `CutPlanReview` is an overlay on `CanvasPane`,
+  // which `visibility:hidden`s away entirely in chat-only mode: without a
+  // hint here, a run parked at an `'awaiting'` gate while the user is
+  // chat-only would look like it just silently stopped.
+  const awaitingGate = useFlowStore((s) => s.awaitingGate);
+  const showAwaitingBadge = awaitingGate !== null && mode === 'chat';
 
   return (
     <div
@@ -52,6 +60,14 @@ export function ModeToggle() {
                 aria-hidden="true"
                 data-testid="mode-chat-badge"
                 className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-ink bg-status-error"
+              />
+            )}
+            {key === 'canvas' && showAwaitingBadge && (
+              <span
+                aria-hidden="true"
+                data-testid="mode-canvas-awaiting-badge"
+                title="Có kế hoạch cắt đang chờ duyệt"
+                className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full border border-ink bg-status-running"
               />
             )}
           </button>

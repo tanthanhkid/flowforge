@@ -62,6 +62,11 @@ const STATE_BADGE: Record<NodeState, { label: string; className: string }> = {
   success: { label: 'success', className: 'bg-status-success text-ink' },
   error: { label: 'error', className: 'bg-status-error text-paper' },
   skipped: { label: 'skipped', className: 'bg-status-skipped text-ink' },
+  // SPEC-step33.md §33e-1 — a node paused mid-run for human approval of a
+  // CutPlan (video.selectMoments). Reuses `running`'s amber token (spec
+  // hint: "⏸ style; reuse an existing status token") rather than minting a
+  // new one.
+  awaiting: { label: 'chờ duyệt', className: 'bg-status-running text-ink' },
 };
 
 /** Corner "stamp" badge (spec §5.3's 6 run-states) — resolves `cached` as its own key, layered over `success`. */
@@ -78,6 +83,7 @@ const STAMP_GLYPH: Record<StatusColorKey, string> = {
   error: '✕',
   skipped: '—',
   cached: '⚡',
+  awaiting: '⏸',
 };
 
 /**
@@ -100,6 +106,7 @@ const STAMP_SHAPE: Record<StatusColorKey, string> = {
   error: 'rounded-none text-status-error',
   skipped: 'rounded-none text-ink',
   cached: 'rounded-none text-white rotate-[13deg]',
+  awaiting: 'rounded-full text-ink',
 };
 
 /**

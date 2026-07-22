@@ -84,6 +84,30 @@ function lastUserContent(messages: ChatMessageLike[]): string {
   return '';
 }
 
+// SPEC-step33.md §33e-2 — `llm.selectMoments` (apps/server/src/nodes/llm.selectMoments.ts)
+// is NOT a chat-turn call: it sends its own `[system, user]` pair straight to
+// `chatCompletion()` and parses the raw assistant content directly as a
+// `CutPlan`-shaped JSON object (`{moments:[...]}`) — no `{reply, ops}`
+// wrapper. Detected by a substring unique to that node's own
+// `buildSystemPrompt()` output, checked against the SYSTEM message (not the
+// last user message, which only carries the transcript) so it's never
+// confused with a real chat-turn scenario above.
+function isSelectMomentsRequest(messages: ChatMessageLike[]): boolean {
+  return messages.some((m) => m.role === 'system' && m.content.includes('chọn ra những khoảnh khắc hay nhất'));
+}
+
+/** Fixed 2-moment `CutPlan` for `video-short.spec.ts` — matches the mocked
+ * `video.transcribe` transcript in `e2e/mock-fal.ts` (2 chunks: 0-2s "đoạn
+ * một", 3-5s "đoạn hai"). */
+function selectMomentsPlan(): string {
+  return JSON.stringify({
+    moments: [
+      { id: 'm1', start: 0, end: 2, title: 'Đoạn một', brollPrompt: 'a cat' },
+      { id: 'm2', start: 3, end: 5, title: 'Đoạn hai', brollPrompt: 'a dog' },
+    ],
+  });
+}
+
 interface Scenario {
   reply: string;
   ops: unknown[];
@@ -159,6 +183,11 @@ function handleChatCompletions(req: IncomingMessage, res: ServerResponse): void 
     // the version-conflict test's "≥2 requests" assertion only needs both
     // attempts to have reached this point, not to have been answered yet.
     requests.push(parsed);
+
+    if (isSelectMomentsRequest(parsed.messages ?? [])) {
+      sendJson(res, 200, { choices: [{ message: { content: selectMomentsPlan() } }] });
+      return;
+    }
 
     const scenario = scenarioFor(lastUserContent(parsed.messages ?? []));
 

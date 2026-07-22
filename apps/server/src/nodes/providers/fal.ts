@@ -26,12 +26,24 @@ interface FalStatusResponse {
   status?: string;
 }
 
+// SPEC-step33.md §33e-2 — resolved via getEnv() (not a module-level const)
+// so a test that mutates process.env before calling into this module still
+// sees the override; both default to the real hosts (config.ts's DEFAULTS),
+// so prod/dev/real-tier e2e stay byte-identical.
+function falQueueBaseUrl(): string {
+  return getEnv('FAL_QUEUE_BASE_URL');
+}
+
+function falRestBaseUrl(): string {
+  return getEnv('FAL_REST_BASE_URL');
+}
+
 function buildStatusUrl(modelId: string, requestId: string): string {
-  return `https://queue.fal.run/${modelId}/requests/${requestId}/status`;
+  return `${falQueueBaseUrl()}/${modelId}/requests/${requestId}/status`;
 }
 
 function buildResponseUrl(modelId: string, requestId: string): string {
-  return `https://queue.fal.run/${modelId}/requests/${requestId}`;
+  return `${falQueueBaseUrl()}/${modelId}/requests/${requestId}`;
 }
 
 function appendQuery(url: string, key: string, value: string): string {
@@ -54,7 +66,7 @@ export async function runFalQueue(args: RunFalQueueArgs): Promise<any> {
   let submitJson: FalSubmitResponse;
   try {
     const { json } = await requestJson<FalSubmitResponse>({
-      url: `https://queue.fal.run/${modelId}`,
+      url: `${falQueueBaseUrl()}/${modelId}`,
       method: 'POST',
       headers,
       body: input,
@@ -175,7 +187,7 @@ export async function uploadToFal(
   let initiateJson: FalStorageInitiateResponse;
   try {
     const { json } = await requestJson<FalStorageInitiateResponse>({
-      url: 'https://rest.fal.ai/storage/upload/initiate?storage_type=fal-cdn-v3',
+      url: `${falRestBaseUrl()}/storage/upload/initiate?storage_type=fal-cdn-v3`,
       method: 'POST',
       headers,
       body: { content_type: contentType, file_name: filename },

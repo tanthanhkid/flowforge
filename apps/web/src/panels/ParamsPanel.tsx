@@ -55,7 +55,7 @@ const LABEL_CLASS_FALLBACK = 'block font-mono-data text-[11px] font-bold trackin
 
 /**
  * SPEC-step31.md F6 — Vietnamese label for every param key that actually
- * appears across the 13 node types in `apps/server/src/nodes/` (rechecked
+ * appears across the 18 node types in `apps/server/src/nodes/` (rechecked
  * against that source, not guessed): fal.image (modelId/imageSize/seed/
  * extra), fal.video (modelId/duration/aspectRatio/extra), input.file/
  * input.image (path), input.markdown (path/content), input.pdf (path/
@@ -63,9 +63,17 @@ const LABEL_CLASS_FALLBACK = 'block font-mono-data text-[11px] font-bold trackin
  * maxTokens — note the real key is `system`, not `systemPrompt`),
  * llm.transform (instruction/model/temperature), output.collect (none),
  * text.template (template), vbee.tts (voiceCode/speed/format/bitrate),
- * video.compose (width/height/fit/loopVideo/fps). A key NOT in this map
- * falls back to `prettifyParamKey` below. Does not affect what's sent to the
- * server — `applyField` below still keys off the original param name.
+ * video.compose (width/height/fit/loopVideo/fps). SPEC-step33.md §33e-1
+ * adds the "video → short" pipeline's 5 new node types: video.transcribe
+ * (language/task), video.selectMoments (maxMoments/targetDurationSec/
+ * temperature/generateBrollPrompts — `model`/`temperature` reuse the
+ * existing LLM-node labels below), broll.generate (model/imageSize/
+ * skipEmptyPrompt — `model`/`imageSize` reuse the existing fal-node labels
+ * below), video.assembleShort (width/height/fit/fps/brollDurationSec —
+ * `width`/`height`/`fit`/`fps` reuse the existing video.compose labels
+ * below), flow.approveGate (no params). A key NOT in this map falls back to
+ * `prettifyParamKey` below. Does not affect what's sent to the server —
+ * `applyField` below still keys off the original param name.
  */
 const PARAM_LABELS: Record<string, string> = {
   modelId: 'Model',
@@ -93,6 +101,15 @@ const PARAM_LABELS: Record<string, string> = {
   fit: 'Kiểu khung hình',
   loopVideo: 'Lặp video theo audio',
   fps: 'FPS',
+  // SPEC-step33.md §33e-1 — video.transcribe / video.selectMoments /
+  // broll.generate / video.assembleShort.
+  language: 'Ngôn ngữ',
+  task: 'Tác vụ',
+  maxMoments: 'Số đoạn tối đa',
+  targetDurationSec: 'Thời lượng mục tiêu (giây)',
+  generateBrollPrompts: 'Sinh prompt b-roll',
+  skipEmptyPrompt: 'Bỏ qua nếu không có prompt',
+  brollDurationSec: 'Thời lượng b-roll (giây)',
 };
 
 /** Splits a camelCase key into Title Case words, e.g. "modelId" -> "Model Id", "someNewParam" -> "Some New Param" — fallback for any param key not in `PARAM_LABELS` (a future node type's param, or a typo). */

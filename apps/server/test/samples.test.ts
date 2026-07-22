@@ -33,7 +33,7 @@ const EXPECTED_INPUT_NODE_TYPE: Record<string, string> = {
 };
 
 describe('samples/*.json', () => {
-  it('finds all 11 expected sample files', () => {
+  it('finds all 12 expected sample files', () => {
     expect(files).toEqual([
       'sample-image-to-video.json',
       'sample-md-to-voiceover.json',
@@ -46,6 +46,7 @@ describe('samples/*.json', () => {
       'sample-stock-restyle.json',
       'sample-tips-listicle.json',
       'sample-value-video.json',
+      'sample-video-to-short.json',
     ]);
   });
 
@@ -150,13 +151,14 @@ describe('samples/*.json', () => {
 });
 
 describe('samples/assets/*', () => {
-  it('contains the 4 bundled stock assets (SPEC-step11.md §1)', () => {
+  it('contains the 5 bundled stock assets (SPEC-step11.md §1, +talk.mp4 SPEC-step33.md §33e-2)', () => {
     const assetFiles = readdirSync(assetsDir).sort();
     expect(assetFiles).toEqual([
       'brief-content.md',
       'brief-flowforge.pdf',
       'stock-coffee.jpg',
       'stock-landscape.jpg',
+      'talk.mp4',
     ]);
   });
 

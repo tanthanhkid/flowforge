@@ -9,7 +9,11 @@
  * `NodeState` itself, but still one of the "6 trạng thái" badges the spec
  * calls for (⚡ cached stamp, spec §5.3).
  */
-export type StatusColorKey = 'pending' | 'running' | 'success' | 'error' | 'skipped' | 'cached';
+// SPEC-step33.md §33e-1 — `awaiting` (a node paused mid-run for human
+// approval of a `CutPlan`) reuses `running`'s amber/yellow hex rather than
+// minting a new `--color-status-*` token: it's still "actively blocked
+// on something", just waiting on a human instead of an API call.
+export type StatusColorKey = 'pending' | 'running' | 'success' | 'error' | 'skipped' | 'cached' | 'awaiting';
 
 export const STATUS_COLORS: Record<StatusColorKey, string> = {
   pending: '#C9C4B4',
@@ -18,4 +22,5 @@ export const STATUS_COLORS: Record<StatusColorKey, string> = {
   error: '#FF3B3B',
   skipped: '#C9C4B4',
   cached: '#3B5FFF',
+  awaiting: '#FFDE21',
 };

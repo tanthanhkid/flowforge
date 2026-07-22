@@ -60,6 +60,12 @@ const WEB_PORT = 5273;
 // FREE tier only. `chat.spec.ts` also imports this literal (kept in sync by
 // hand, same as SERVER_PORT/WEB_PORT above having no shared source either).
 const MOCK_OPENROUTER_PORT = 3979;
+// SPEC-step33.md §33e-2 — mock fal.ai server (e2e/mock-fal.ts), FREE tier
+// only, same rationale as MOCK_OPENROUTER_PORT above. `video-short.spec.ts`
+// doesn't need this literal directly (unlike chat.spec.ts's use of
+// MOCK_OPENROUTER_PORT), but it's kept as a named const for the same
+// readability reason.
+const MOCK_FAL_PORT = 3980;
 
 const isRealTier = Boolean(process.env.E2E_REAL);
 
@@ -115,6 +121,20 @@ export default defineConfig({
         // its real default and `OPENROUTER_API_KEY` still comes from the
         // real `.env.local` — `e2e:real`'s existing, unchanged behavior.
         ...(isRealTier ? {} : { OPENROUTER_BASE_URL: `http://127.0.0.1:${MOCK_OPENROUTER_PORT}`, OPENROUTER_API_KEY: 'e2e-dummy' }),
+        // SPEC-step33.md §33e-2 — FREE tier only, same rationale as the
+        // OPENROUTER_BASE_URL override above: redirects every
+        // `runFalQueue`/`uploadToFal` call (video.transcribe/broll.generate)
+        // to the mock fal server below instead of the real fal.ai API, at
+        // zero cost. `isRealTier` sets none of these, so `getEnv(...)` falls
+        // back to the real defaults and FAL_KEY still comes from the real
+        // `.env.local` — `e2e:real`'s existing, unchanged behavior.
+        ...(isRealTier
+          ? {}
+          : {
+              FAL_QUEUE_BASE_URL: `http://127.0.0.1:${MOCK_FAL_PORT}`,
+              FAL_REST_BASE_URL: `http://127.0.0.1:${MOCK_FAL_PORT}`,
+              FAL_KEY: 'e2e-dummy',
+            }),
       },
     },
     {
@@ -146,6 +166,18 @@ export default defineConfig({
             timeout: 30_000,
             env: {
               PORT: String(MOCK_OPENROUTER_PORT),
+            },
+          },
+          // SPEC-step33.md §33e-2 — mock fal.ai server, FREE tier only, same
+          // pattern as the mock-openrouter webServer entry above.
+          {
+            command: 'pnpm --filter server exec tsx ../../e2e/mock-fal.ts',
+            cwd: repoRoot,
+            url: `http://127.0.0.1:${MOCK_FAL_PORT}/file/broll.png`,
+            reuseExistingServer: false,
+            timeout: 30_000,
+            env: {
+              PORT: String(MOCK_FAL_PORT),
             },
           },
         ]),

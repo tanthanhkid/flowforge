@@ -36,6 +36,7 @@ import { FlowCanvas } from '../canvas/FlowCanvas.tsx';
 import { Sidebar } from '../canvas/Sidebar.tsx';
 import { layoutModeFromRatio, SPLIT_ANIMATE_MS, useChatStore } from '../store/chat.ts';
 import { useFlowStore } from '../store/flow.ts';
+import { CutPlanReview } from './CutPlanReview.tsx';
 import { HistoryPanel } from './HistoryPanel.tsx';
 import { ParamsPanel } from './ParamsPanel.tsx';
 import { ResultsPanel } from './ResultsPanel.tsx';
@@ -82,8 +83,13 @@ export function CanvasPane() {
     >
       <Sidebar />
 
-      <main className="min-w-0 flex-1">
+      {/* SPEC-step33.md §33e-1 — `relative` so `<CutPlanReview>` (an
+          `absolute inset-4` overlay, only rendered while a run is parked at
+          an `'awaiting'` gate) positions itself against this pane rather
+          than the page. */}
+      <main className="relative min-w-0 flex-1">
         <FlowCanvas />
+        <CutPlanReview />
       </main>
 
       <aside data-testid="right-panel" className="flex w-80 shrink-0 flex-col border-l-[3px] border-ink bg-paper">

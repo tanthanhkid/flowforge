@@ -8,6 +8,13 @@
 
 // ---- engine/types.ts -------------------------------------------------
 
+// SPEC-step33.md §33e-1 — `CutPlan`/`CutMoment` are defined once in
+// `packages/shared` (zod, FE/BE-shared, same pattern as `PatchOp` below)
+// rather than hand-mirrored here. Imported (not just re-exported) so
+// `NodeStateEvent` below can reference `CutPlan` directly.
+import type { CutPlan, CutMoment } from 'shared';
+export type { CutPlan, CutMoment };
+
 export type PortType = 'text' | 'image' | 'video' | 'audio' | 'json' | 'number' | 'any';
 
 export interface MediaValue {
@@ -27,7 +34,10 @@ export interface PortSpec {
   description?: string;
 }
 
-export type NodeState = 'pending' | 'running' | 'success' | 'error' | 'skipped';
+// SPEC-step33.md §33e-1 — `'awaiting'` (server 33c) is a node paused mid-run
+// waiting on human approval of a `CutPlan` (`video.selectMoments`) before the
+// engine continues; distinct from `'pending'` (hasn't started yet).
+export type NodeState = 'pending' | 'running' | 'success' | 'error' | 'skipped' | 'awaiting';
 export type RunStatus = 'running' | 'success' | 'error';
 
 // ---- engine/registry.ts (GET /api/registry) ---------------------------
@@ -168,6 +178,10 @@ export interface NodeStateEvent {
   state: NodeState;
   error?: string;
   cached?: boolean;
+  /** SPEC-step33.md §33c — present only when `state === 'awaiting'`: the
+   * `CutPlan` the human is being asked to review/edit before the engine
+   * resumes this node. */
+  pendingApproval?: { plan: CutPlan };
 }
 
 export interface NodeLogEvent {

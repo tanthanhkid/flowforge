@@ -13,7 +13,15 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ENV_KEYS = ['OPENROUTER_API_KEY', 'OPENROUTER_DEFAULT_MODEL', 'FAL_KEY', 'VBEE_APP_ID', 'VBEE_TOKEN'] as const;
+const ENV_KEYS = [
+  'OPENROUTER_API_KEY',
+  'OPENROUTER_DEFAULT_MODEL',
+  'FAL_KEY',
+  'FAL_QUEUE_BASE_URL',
+  'FAL_REST_BASE_URL',
+  'VBEE_APP_ID',
+  'VBEE_TOKEN',
+] as const;
 
 let savedEnv: Record<string, string | undefined>;
 
@@ -129,6 +137,22 @@ describe('getEnv()', () => {
     process.env.OPENROUTER_API_KEY = 'explicit-test-value-123';
     const { getEnv } = await importFreshConfig();
     expect(getEnv('OPENROUTER_API_KEY')).toBe('explicit-test-value-123');
+  });
+
+  // SPEC-step33.md §33e-2 — additive fal.ai host overrides for
+  // `nodes/providers/fal.ts`: asserts the defaults stay exactly the real
+  // hosts (byte-identical prod/dev/real-tier e2e behavior) when unset, same
+  // as OPENROUTER_BASE_URL's own default is never asserted-broken here.
+  it('FAL_QUEUE_BASE_URL falls back to "https://queue.fal.run" when unset', async () => {
+    delete process.env.FAL_QUEUE_BASE_URL;
+    const { getEnv } = await importFreshConfig();
+    expect(getEnv('FAL_QUEUE_BASE_URL')).toBe('https://queue.fal.run');
+  });
+
+  it('FAL_REST_BASE_URL falls back to "https://rest.fal.ai" when unset', async () => {
+    delete process.env.FAL_REST_BASE_URL;
+    const { getEnv } = await importFreshConfig();
+    expect(getEnv('FAL_REST_BASE_URL')).toBe('https://rest.fal.ai');
   });
 
   it('opts.optional:true returns "" instead of throwing when the key is missing', async () => {

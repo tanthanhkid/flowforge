@@ -12,6 +12,7 @@ import type {
   ConversationSummary,
   CostEstimate,
   CreateRunBody,
+  CutPlan,
   EditNodeResult,
   GenerateWorkflowResult,
   NodeLogEvent,
@@ -151,6 +152,23 @@ export function listRuns(params?: { workflowId?: string; limit?: number }): Prom
 
 export function getRun(id: string): Promise<RunSnapshot> {
   return request(`/api/runs/${encodeURIComponent(id)}`);
+}
+
+// SPEC-step33.md §33e-1 — resume/stop an `'awaiting'` node (server 33c/33d):
+// the human-in-the-loop CutPlan review gate. `resumeRun`'s body shape
+// (`{nodeId, output}`) mirrors what the engine expects a paused node's
+// resolved output to look like — `output` here is the (possibly
+// human-edited) `CutPlan` itself, validated server-side against
+// `CutPlanSchema` (400 on bad shape, e.g. `end <= start`).
+export function resumeRun(runId: string, nodeId: string, plan: CutPlan): Promise<{ resumed: true }> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/resume`, {
+    method: 'POST',
+    body: JSON.stringify({ nodeId, output: plan }),
+  });
+}
+
+export function stopRun(runId: string): Promise<{ stopped: true }> {
+  return request(`/api/runs/${encodeURIComponent(runId)}/stop`, { method: 'POST' });
 }
 
 // ---- agent (SPEC-step5.md §5) -------------------------------------------
